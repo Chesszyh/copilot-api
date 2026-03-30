@@ -7,6 +7,7 @@ export interface AppConfig {
   auth?: {
     apiKeys?: Array<string>
   }
+  observability?: ObservabilityConfig
   providers?: Record<string, ProviderConfig>
   extraPrompts?: Record<string, string>
   smallModel?: string
@@ -19,6 +20,15 @@ export interface AppConfig {
   useMessagesApi?: boolean
   anthropicApiKey?: string
   useResponsesApiWebSearch?: boolean
+}
+
+export interface ObservabilityConfig {
+  enabled?: boolean
+  queueCapacity?: number
+  batchSize?: number
+  flushIntervalMs?: number
+  rawRetentionDays?: number
+  maxBodyBytes?: number
 }
 
 export interface ModelConfig {
@@ -75,6 +85,14 @@ You interact with the user through a terminal. You have 2 ways of communicating 
 const defaultConfig: AppConfig = {
   auth: {
     apiKeys: [],
+  },
+  observability: {
+    enabled: false,
+    queueCapacity: 2048,
+    batchSize: 100,
+    flushIntervalMs: 1000,
+    rawRetentionDays: 3,
+    maxBodyBytes: 262144,
   },
   providers: {},
   extraPrompts: {
@@ -278,6 +296,14 @@ export function getProviderConfig(name: string): ResolvedProviderConfig | null {
     models: provider.models,
     adjustInputTokens: provider.adjustInputTokens,
   }
+}
+
+export function getObservabilityConfig(): Required<ObservabilityConfig> {
+  const config = getConfig()
+  return {
+    ...defaultConfig.observability,
+    ...config.observability,
+  } as Required<ObservabilityConfig>
 }
 
 export function listEnabledProviders(): Array<string> {
