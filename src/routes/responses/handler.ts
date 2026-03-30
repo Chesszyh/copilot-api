@@ -5,6 +5,12 @@ import { streamSSE } from "hono/streaming"
 import { awaitApproval } from "~/lib/approval"
 import { getConfig, isResponsesApiWebSearchEnabled } from "~/lib/config"
 import { createHandlerLogger } from "~/lib/logger"
+import {
+  observeRequestComplete,
+  observeRequestError,
+  observeRequestStart,
+  observeStreamFirstChunk,
+} from "~/lib/observability/capture"
 import { checkRateLimit } from "~/lib/rate-limit"
 import { state } from "~/lib/state"
 import { generateRequestIdFromPayload, getUUID } from "~/lib/utils"
@@ -29,6 +35,13 @@ export const handleResponses = async (c: Context) => {
   await checkRateLimit(state)
 
   const payload = await c.req.json<ResponsesPayload>()
+  let captureState = observeRequestStart(c, {
+    requestId: "pending",
+    routeType: "responses",
+    model: payload.model,
+    stream: Boolean(payload.stream),
+    requestBody: payload,
+  })
   logger.debug("Responses request payload:", JSON.stringify(payload))
 
   // not support subagent marker for now , set sessionId = getUUID(requestId)
@@ -37,6 +50,11 @@ export const handleResponses = async (c: Context) => {
 
   const sessionId = getUUID(requestId)
   logger.debug("Extracted session ID:", sessionId)
+  captureState = {
+    ...captureState,
+    requestId,
+    sessionId,
+  }
 
   useFunctionApplyPatch(payload)
 
@@ -78,41 +96,66 @@ export const handleResponses = async (c: Context) => {
     await awaitApproval()
   }
 
-  const response = await createResponses(payload, {
-    vision,
-    initiator,
-    requestId,
-    sessionId: sessionId,
-  })
-
-  if (isStreamingRequested(payload) && isAsyncIterable(response)) {
-    logger.debug("Forwarding native Responses stream")
-    return streamSSE(c, async (stream) => {
-      const idTracker = createStreamIdTracker()
-
-      for await (const chunk of response) {
-        logger.debug("Responses stream chunk:", JSON.stringify(chunk))
-
-        const processedData = fixStreamIds(
-          (chunk as { data?: string }).data ?? "",
-          (chunk as { event?: string }).event,
-          idTracker,
-        )
-
-        await stream.writeSSE({
-          id: (chunk as { id?: string }).id,
-          event: (chunk as { event?: string }).event,
-          data: processedData,
-        })
-      }
+  try {
+    const response = await createResponses(payload, {
+      vision,
+      initiator,
+      requestId,
+      sessionId: sessionId,
     })
-  }
 
-  logger.debug(
-    "Forwarding native Responses result:",
-    JSON.stringify(response).slice(-400),
-  )
-  return c.json(response as ResponsesResult)
+    if (isStreamingRequested(payload) && isAsyncIterable(response)) {
+      logger.debug("Forwarding native Responses stream")
+      return streamSSE(c, async (stream) => {
+        const idTracker = createStreamIdTracker()
+        let sawChunk = false
+
+        for await (const chunk of response) {
+          if (!sawChunk) {
+            observeStreamFirstChunk(captureState)
+            sawChunk = true
+          }
+          logger.debug("Responses stream chunk:", JSON.stringify(chunk))
+
+          const processedData = fixStreamIds(
+            (chunk as { data?: string }).data ?? "",
+            (chunk as { event?: string }).event,
+            idTracker,
+          )
+
+          await stream.writeSSE({
+            id: (chunk as { id?: string }).id,
+            event: (chunk as { event?: string }).event,
+            data: processedData,
+          })
+        }
+
+        observeRequestComplete(captureState, {
+          statusCode: 200,
+        })
+      })
+    }
+
+    logger.debug(
+      "Forwarding native Responses result:",
+      JSON.stringify(response).slice(-400),
+    )
+    const result = response as ResponsesResult
+    observeRequestComplete(captureState, {
+      statusCode: 200,
+      responseBody: result,
+      usage: {
+        inputTokens: result.usage?.input_tokens,
+        outputTokens: result.usage?.output_tokens,
+        cachedTokens: result.usage?.input_tokens_details?.cached_tokens,
+        reasoningTokens: result.usage?.output_tokens_details?.reasoning_tokens,
+      },
+    })
+    return c.json(result)
+  } catch (error) {
+    observeRequestError(captureState, error)
+    throw error
+  }
 }
 
 const isAsyncIterable = <T>(value: unknown): value is AsyncIterable<T> =>

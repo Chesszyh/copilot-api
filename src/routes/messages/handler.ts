@@ -11,6 +11,12 @@ import {
   isMessagesApiEnabled,
 } from "~/lib/config"
 import { createHandlerLogger } from "~/lib/logger"
+import {
+  observeRequestComplete,
+  observeRequestError,
+  observeRequestStart,
+  observeStreamFirstChunk,
+} from "~/lib/observability/capture"
 import { findEndpointModel } from "~/lib/models"
 import { checkRateLimit } from "~/lib/rate-limit"
 import { state } from "~/lib/state"
@@ -65,6 +71,13 @@ export async function handleCompletion(c: Context) {
   await checkRateLimit(state)
 
   const anthropicPayload = await c.req.json<AnthropicMessagesPayload>()
+  let captureState = observeRequestStart(c, {
+    requestId: "pending",
+    routeType: "messages",
+    model: anthropicPayload.model,
+    stream: Boolean(anthropicPayload.stream),
+    requestBody: anthropicPayload,
+  })
   logger.debug("Anthropic request payload:", JSON.stringify(anthropicPayload))
 
   const subagentMarker = parseSubagentMarkerFromFirstUser(anthropicPayload)
@@ -100,6 +113,11 @@ export async function handleCompletion(c: Context) {
 
   const requestId = generateRequestIdFromPayload(anthropicPayload, sessionId)
   logger.debug("Generated request ID:", requestId)
+  captureState = {
+    ...captureState,
+    requestId,
+    sessionId,
+  }
 
   if (state.manualApprove) {
     await awaitApproval()
@@ -108,33 +126,41 @@ export async function handleCompletion(c: Context) {
   const selectedModel = findEndpointModel(anthropicPayload.model)
   anthropicPayload.model = selectedModel?.id ?? anthropicPayload.model
 
-  if (shouldUseMessagesApi(selectedModel)) {
-    return await handleWithMessagesApi(c, anthropicPayload, {
-      anthropicBetaHeader: anthropicBeta,
+  try {
+    if (shouldUseMessagesApi(selectedModel)) {
+      return await handleWithMessagesApi(c, anthropicPayload, {
+        anthropicBetaHeader: anthropicBeta,
+        subagentMarker,
+        selectedModel,
+        requestId,
+        sessionId,
+        isCompact,
+        captureState,
+      })
+    }
+
+    if (shouldUseResponsesApi(selectedModel)) {
+      return await handleWithResponsesApi(c, anthropicPayload, {
+        subagentMarker,
+        selectedModel,
+        requestId,
+        sessionId,
+        isCompact,
+        captureState,
+      })
+    }
+
+    return await handleWithChatCompletions(c, anthropicPayload, {
       subagentMarker,
-      selectedModel,
       requestId,
       sessionId,
       isCompact,
+      captureState,
     })
+  } catch (error) {
+    observeRequestError(captureState, error)
+    throw error
   }
-
-  if (shouldUseResponsesApi(selectedModel)) {
-    return await handleWithResponsesApi(c, anthropicPayload, {
-      subagentMarker,
-      selectedModel,
-      requestId,
-      sessionId,
-      isCompact,
-    })
-  }
-
-  return await handleWithChatCompletions(c, anthropicPayload, {
-    subagentMarker,
-    requestId,
-    sessionId,
-    isCompact,
-  })
 }
 
 const RESPONSES_ENDPOINT = "/responses"
@@ -148,9 +174,11 @@ const handleWithChatCompletions = async (
     requestId: string
     sessionId?: string
     isCompact?: boolean
+    captureState: ReturnType<typeof observeRequestStart>
   },
 ) => {
-  const { subagentMarker, requestId, sessionId, isCompact } = options
+  const { subagentMarker, requestId, sessionId, isCompact, captureState } =
+    options
   const openAIPayload = translateToOpenAI(anthropicPayload)
   logger.debug(
     "Translated OpenAI request payload:",
@@ -174,6 +202,10 @@ const handleWithChatCompletions = async (
       "Translated Anthropic response:",
       JSON.stringify(anthropicResponse),
     )
+    observeRequestComplete(captureState, {
+      statusCode: 200,
+      responseBody: anthropicResponse,
+    })
     return c.json(anthropicResponse)
   }
 
@@ -188,6 +220,7 @@ const handleWithChatCompletions = async (
     }
 
     for await (const rawEvent of response) {
+      observeStreamFirstChunk(captureState)
       logger.debug("Copilot raw stream event:", JSON.stringify(rawEvent))
       if (rawEvent.data === "[DONE]") {
         break
@@ -208,6 +241,10 @@ const handleWithChatCompletions = async (
         })
       }
     }
+
+    observeRequestComplete(captureState, {
+      statusCode: 200,
+    })
   })
 }
 
@@ -220,10 +257,17 @@ const handleWithResponsesApi = async (
     requestId: string
     sessionId?: string
     isCompact?: boolean
+    captureState: ReturnType<typeof observeRequestStart>
   },
 ) => {
-  const { subagentMarker, selectedModel, requestId, sessionId, isCompact } =
-    options
+  const {
+    subagentMarker,
+    selectedModel,
+    requestId,
+    sessionId,
+    isCompact,
+    captureState,
+  } = options
 
   const responsesPayload =
     translateAnthropicMessagesToResponsesPayload(anthropicPayload)
@@ -256,6 +300,7 @@ const handleWithResponsesApi = async (
       const streamState = createResponsesStreamState()
 
       for await (const chunk of response) {
+        observeStreamFirstChunk(captureState)
         const eventName = chunk.event
         if (eventName === "ping") {
           await stream.writeSSE({ event: "ping", data: '{"type":"ping"}' })
@@ -300,6 +345,10 @@ const handleWithResponsesApi = async (
           data: JSON.stringify(errorEvent),
         })
       }
+
+      observeRequestComplete(captureState, {
+        statusCode: 200,
+      })
     })
   }
 
@@ -314,6 +363,10 @@ const handleWithResponsesApi = async (
     "Translated Anthropic response:",
     JSON.stringify(anthropicResponse),
   )
+  observeRequestComplete(captureState, {
+    statusCode: 200,
+    responseBody: anthropicResponse,
+  })
   return c.json(anthropicResponse)
 }
 
@@ -327,6 +380,7 @@ const handleWithMessagesApi = async (
     requestId: string
     sessionId?: string
     isCompact?: boolean
+    captureState: ReturnType<typeof observeRequestStart>
   },
 ) => {
   const {
@@ -336,6 +390,7 @@ const handleWithMessagesApi = async (
     requestId,
     sessionId,
     isCompact,
+    captureState,
   } = options
   // Pre-request processing: filter thinking blocks for Claude models so only
   // valid thinking blocks are sent to the Copilot Messages API.
@@ -380,6 +435,7 @@ const handleWithMessagesApi = async (
     logger.debug("Streaming response from Copilot (Messages API)")
     return streamSSE(c, async (stream) => {
       for await (const event of response) {
+        observeStreamFirstChunk(captureState)
         const eventName = event.event
         const data = event.data ?? ""
         logger.debug("Messages raw stream event:", data)
@@ -388,6 +444,10 @@ const handleWithMessagesApi = async (
           data,
         })
       }
+
+      observeRequestComplete(captureState, {
+        statusCode: 200,
+      })
     })
   }
 
@@ -395,6 +455,10 @@ const handleWithMessagesApi = async (
     "Non-streaming Messages result:",
     JSON.stringify(response).slice(-400),
   )
+  observeRequestComplete(captureState, {
+    statusCode: 200,
+    responseBody: response,
+  })
   return c.json(response)
 }
 

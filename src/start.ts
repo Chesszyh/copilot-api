@@ -7,6 +7,7 @@ import { serve, type ServerHandler } from "srvx"
 import invariant from "tiny-invariant"
 
 import { mergeConfigWithDefaults } from "./lib/config"
+import { startObservabilityLifecycle } from "./lib/observability/lifecycle"
 import { ensurePaths } from "./lib/paths"
 import { initProxyFromEnv } from "./lib/proxy"
 import { generateEnvScript } from "./lib/shell"
@@ -57,6 +58,7 @@ export async function runServer(options: RunServerOptions): Promise<void> {
   state.showToken = options.showToken
 
   await ensurePaths()
+  startObservabilityLifecycle()
   await cacheVSCodeVersion()
   cacheMacMachineId()
   cacheVsCodeSessionId()
