@@ -57,6 +57,10 @@ export async function runServer(options: RunServerOptions): Promise<void> {
   state.showToken = options.showToken
 
   await ensurePaths()
+  const { startObservabilityLifecycle } = await import(
+    "./lib/observability/lifecycle"
+  )
+  startObservabilityLifecycle()
   await cacheVSCodeVersion()
   cacheMacMachineId()
   cacheVsCodeSessionId()

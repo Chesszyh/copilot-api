@@ -9,6 +9,9 @@ import { completionRoutes } from "./routes/chat-completions/route"
 import { embeddingRoutes } from "./routes/embeddings/route"
 import { messageRoutes } from "./routes/messages/route"
 import { modelRoutes } from "./routes/models/route"
+import { createObservabilityPinRoute } from "./routes/observability/pin-route"
+import { createObservabilitySessionsRoute } from "./routes/observability/sessions-route"
+import { createObservabilitySummaryRoute } from "./routes/observability/summary-route"
 import { providerMessageRoutes } from "./routes/provider/messages/route"
 import { providerModelRoutes } from "./routes/provider/models/route"
 import { responsesRoutes } from "./routes/responses/route"
@@ -40,6 +43,9 @@ server.route("/embeddings", embeddingRoutes)
 server.route("/usage", usageRoute)
 server.route("/token", tokenRoute)
 server.route("/responses", responsesRoutes)
+server.route("/observability/summary", createObservabilitySummaryRoute())
+server.route("/observability/sessions", createObservabilitySessionsRoute())
+server.route("/observability/pin", createObservabilityPinRoute())
 
 // Compatibility with tools that expect v1/ prefix
 server.route("/v1/chat/completions", completionRoutes)
