@@ -11,13 +11,13 @@ import {
   isMessagesApiEnabled,
 } from "~/lib/config"
 import { createHandlerLogger } from "~/lib/logger"
+import { findEndpointModel } from "~/lib/models"
 import {
   observeRequestComplete,
   observeRequestError,
   observeRequestStart,
   observeStreamFirstChunk,
 } from "~/lib/observability/capture"
-import { findEndpointModel } from "~/lib/models"
 import { checkRateLimit } from "~/lib/rate-limit"
 import { state } from "~/lib/state"
 import { generateRequestIdFromPayload, getRootSessionId } from "~/lib/utils"
@@ -166,6 +166,74 @@ export async function handleCompletion(c: Context) {
 const RESPONSES_ENDPOINT = "/responses"
 const MESSAGES_ENDPOINT = "/v1/messages"
 
+const completeCapture = (
+  captureState: ReturnType<typeof observeRequestStart>,
+  responseBody?: unknown,
+) => {
+  observeRequestComplete(captureState, {
+    statusCode: 200,
+    responseBody,
+  })
+}
+
+const streamResponsesAsAnthropic = (
+  c: Context,
+  response: AsyncIterable<{ event?: string; data?: string }>,
+  captureState: ReturnType<typeof observeRequestStart>,
+) =>
+  streamSSE(c, async (stream) => {
+    const streamState = createResponsesStreamState()
+
+    for await (const chunk of response) {
+      observeStreamFirstChunk(captureState)
+      const eventName = chunk.event
+      if (eventName === "ping") {
+        await stream.writeSSE({ event: "ping", data: '{"type":"ping"}' })
+        continue
+      }
+
+      const data = chunk.data
+      if (!data) {
+        continue
+      }
+
+      logger.debug("Responses raw stream event:", data)
+
+      const events = translateResponsesStreamEvent(
+        JSON.parse(data) as ResponseStreamEvent,
+        streamState,
+      )
+      for (const event of events) {
+        const eventData = JSON.stringify(event)
+        logger.debug("Translated Anthropic event:", eventData)
+        await stream.writeSSE({
+          event: event.type,
+          data: eventData,
+        })
+      }
+
+      if (streamState.messageCompleted) {
+        logger.debug("Message completed, ending stream")
+        break
+      }
+    }
+
+    if (!streamState.messageCompleted) {
+      logger.warn(
+        "Responses stream ended without completion; sending error event",
+      )
+      const errorEvent = buildErrorEvent(
+        "Responses stream ended without completion",
+      )
+      await stream.writeSSE({
+        event: errorEvent.type,
+        data: JSON.stringify(errorEvent),
+      })
+    }
+
+    completeCapture(captureState)
+  })
+
 const handleWithChatCompletions = async (
   c: Context,
   anthropicPayload: AnthropicMessagesPayload,
@@ -202,10 +270,7 @@ const handleWithChatCompletions = async (
       "Translated Anthropic response:",
       JSON.stringify(anthropicResponse),
     )
-    observeRequestComplete(captureState, {
-      statusCode: 200,
-      responseBody: anthropicResponse,
-    })
+    completeCapture(captureState, anthropicResponse)
     return c.json(anthropicResponse)
   }
 
@@ -242,9 +307,7 @@ const handleWithChatCompletions = async (
       }
     }
 
-    observeRequestComplete(captureState, {
-      statusCode: 200,
-    })
+    completeCapture(captureState)
   })
 }
 
@@ -296,60 +359,7 @@ const handleWithResponsesApi = async (
 
   if (responsesPayload.stream && isAsyncIterable(response)) {
     logger.debug("Streaming response from Copilot (Responses API)")
-    return streamSSE(c, async (stream) => {
-      const streamState = createResponsesStreamState()
-
-      for await (const chunk of response) {
-        observeStreamFirstChunk(captureState)
-        const eventName = chunk.event
-        if (eventName === "ping") {
-          await stream.writeSSE({ event: "ping", data: '{"type":"ping"}' })
-          continue
-        }
-
-        const data = chunk.data
-        if (!data) {
-          continue
-        }
-
-        logger.debug("Responses raw stream event:", data)
-
-        const events = translateResponsesStreamEvent(
-          JSON.parse(data) as ResponseStreamEvent,
-          streamState,
-        )
-        for (const event of events) {
-          const eventData = JSON.stringify(event)
-          logger.debug("Translated Anthropic event:", eventData)
-          await stream.writeSSE({
-            event: event.type,
-            data: eventData,
-          })
-        }
-
-        if (streamState.messageCompleted) {
-          logger.debug("Message completed, ending stream")
-          break
-        }
-      }
-
-      if (!streamState.messageCompleted) {
-        logger.warn(
-          "Responses stream ended without completion; sending error event",
-        )
-        const errorEvent = buildErrorEvent(
-          "Responses stream ended without completion",
-        )
-        await stream.writeSSE({
-          event: errorEvent.type,
-          data: JSON.stringify(errorEvent),
-        })
-      }
-
-      observeRequestComplete(captureState, {
-        statusCode: 200,
-      })
-    })
+    return streamResponsesAsAnthropic(c, response, captureState)
   }
 
   logger.debug(
@@ -363,11 +373,39 @@ const handleWithResponsesApi = async (
     "Translated Anthropic response:",
     JSON.stringify(anthropicResponse),
   )
-  observeRequestComplete(captureState, {
-    statusCode: 200,
-    responseBody: anthropicResponse,
-  })
+  completeCapture(captureState, anthropicResponse)
   return c.json(anthropicResponse)
+}
+
+const prepareMessagesPayload = (
+  anthropicPayload: AnthropicMessagesPayload,
+  selectedModel: Model | undefined,
+): void => {
+  for (const msg of anthropicPayload.messages) {
+    if (msg.role === "assistant" && Array.isArray(msg.content)) {
+      msg.content = msg.content.filter((block) => {
+        if (block.type !== "thinking") return true
+        return (
+          block.thinking
+          && block.thinking !== "Thinking..."
+          && block.signature
+          && !block.signature.includes("@")
+        )
+      })
+    }
+  }
+
+  const toolChoice = anthropicPayload.tool_choice
+  const disableThink = toolChoice?.type === "any" || toolChoice?.type === "tool"
+
+  if (selectedModel?.capabilities.supports.adaptive_thinking && !disableThink) {
+    anthropicPayload.thinking = {
+      type: "adaptive",
+    }
+    anthropicPayload.output_config = {
+      effort: getAnthropicEffortForModel(anthropicPayload.model),
+    }
+  }
 }
 
 const handleWithMessagesApi = async (
@@ -392,35 +430,7 @@ const handleWithMessagesApi = async (
     isCompact,
     captureState,
   } = options
-  // Pre-request processing: filter thinking blocks for Claude models so only
-  // valid thinking blocks are sent to the Copilot Messages API.
-  for (const msg of anthropicPayload.messages) {
-    if (msg.role === "assistant" && Array.isArray(msg.content)) {
-      msg.content = msg.content.filter((block) => {
-        if (block.type !== "thinking") return true
-        return (
-          block.thinking
-          && block.thinking !== "Thinking..."
-          && block.signature
-          && !block.signature.includes("@")
-        )
-      })
-    }
-  }
-
-  // https://platform.claude.com/docs/en/build-with-claude/extended-thinking#extended-thinking-with-tool-use
-  // Using tool_choice: {"type": "any"} or tool_choice: {"type": "tool", "name": "..."} will result in an error because these options force tool use, which is incompatible with extended thinking.
-  const toolChoice = anthropicPayload.tool_choice
-  const disableThink = toolChoice?.type === "any" || toolChoice?.type === "tool"
-
-  if (selectedModel?.capabilities.supports.adaptive_thinking && !disableThink) {
-    anthropicPayload.thinking = {
-      type: "adaptive",
-    }
-    anthropicPayload.output_config = {
-      effort: getAnthropicEffortForModel(anthropicPayload.model),
-    }
-  }
+  prepareMessagesPayload(anthropicPayload, selectedModel)
 
   logger.debug("Translated Messages payload:", JSON.stringify(anthropicPayload))
 
@@ -445,9 +455,7 @@ const handleWithMessagesApi = async (
         })
       }
 
-      observeRequestComplete(captureState, {
-        statusCode: 200,
-      })
+      completeCapture(captureState)
     })
   }
 
@@ -455,10 +463,7 @@ const handleWithMessagesApi = async (
     "Non-streaming Messages result:",
     JSON.stringify(response).slice(-400),
   )
-  observeRequestComplete(captureState, {
-    statusCode: 200,
-    responseBody: response,
-  })
+  completeCapture(captureState, response)
   return c.json(response)
 }
 

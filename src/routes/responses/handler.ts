@@ -31,6 +31,73 @@ const logger = createHandlerLogger("responses-handler")
 
 const RESPONSES_ENDPOINT = "/responses"
 
+const completeResponsesCapture = (
+  captureState: ReturnType<typeof observeRequestStart>,
+  responseBody?: unknown,
+  usage?: {
+    inputTokens?: number | null
+    outputTokens?: number | null
+    cachedTokens?: number | null
+    reasoningTokens?: number | null
+  },
+) => {
+  observeRequestComplete(captureState, {
+    statusCode: 200,
+    responseBody,
+    usage,
+  })
+}
+
+const prepareResponsesPayload = (payload: ResponsesPayload) => {
+  useFunctionApplyPatch(payload)
+
+  if (!isResponsesApiWebSearchEnabled()) {
+    removeWebSearchTool(payload)
+  }
+
+  compactInputByLatestCompaction(payload)
+
+  const selectedModel = state.models?.data.find(
+    (model) => model.id === payload.model,
+  )
+  const supportsResponses =
+    selectedModel?.supported_endpoints?.includes(RESPONSES_ENDPOINT) ?? false
+
+  return { selectedModel, supportsResponses }
+}
+
+const streamNativeResponses = (
+  c: Context,
+  response: AsyncIterable<object>,
+  captureState: ReturnType<typeof observeRequestStart>,
+) =>
+  streamSSE(c, async (stream) => {
+    const idTracker = createStreamIdTracker()
+    let sawChunk = false
+
+    for await (const chunk of response) {
+      if (!sawChunk) {
+        observeStreamFirstChunk(captureState)
+        sawChunk = true
+      }
+      logger.debug("Responses stream chunk:", JSON.stringify(chunk))
+
+      const processedData = fixStreamIds(
+        (chunk as { data?: string }).data ?? "",
+        (chunk as { event?: string }).event,
+        idTracker,
+      )
+
+      await stream.writeSSE({
+        id: (chunk as { id?: string }).id,
+        event: (chunk as { event?: string }).event,
+        data: processedData,
+      })
+    }
+
+    completeResponsesCapture(captureState)
+  })
+
 export const handleResponses = async (c: Context) => {
   await checkRateLimit(state)
 
@@ -56,19 +123,7 @@ export const handleResponses = async (c: Context) => {
     sessionId,
   }
 
-  useFunctionApplyPatch(payload)
-
-  if (!isResponsesApiWebSearchEnabled()) {
-    removeWebSearchTool(payload)
-  }
-
-  compactInputByLatestCompaction(payload)
-
-  const selectedModel = state.models?.data.find(
-    (model) => model.id === payload.model,
-  )
-  const supportsResponses =
-    selectedModel?.supported_endpoints?.includes(RESPONSES_ENDPOINT) ?? false
+  const { selectedModel, supportsResponses } = prepareResponsesPayload(payload)
 
   if (!supportsResponses) {
     return c.json(
@@ -106,34 +161,7 @@ export const handleResponses = async (c: Context) => {
 
     if (isStreamingRequested(payload) && isAsyncIterable(response)) {
       logger.debug("Forwarding native Responses stream")
-      return streamSSE(c, async (stream) => {
-        const idTracker = createStreamIdTracker()
-        let sawChunk = false
-
-        for await (const chunk of response) {
-          if (!sawChunk) {
-            observeStreamFirstChunk(captureState)
-            sawChunk = true
-          }
-          logger.debug("Responses stream chunk:", JSON.stringify(chunk))
-
-          const processedData = fixStreamIds(
-            (chunk as { data?: string }).data ?? "",
-            (chunk as { event?: string }).event,
-            idTracker,
-          )
-
-          await stream.writeSSE({
-            id: (chunk as { id?: string }).id,
-            event: (chunk as { event?: string }).event,
-            data: processedData,
-          })
-        }
-
-        observeRequestComplete(captureState, {
-          statusCode: 200,
-        })
-      })
+      return streamNativeResponses(c, response, captureState)
     }
 
     logger.debug(
@@ -141,15 +169,11 @@ export const handleResponses = async (c: Context) => {
       JSON.stringify(response).slice(-400),
     )
     const result = response as ResponsesResult
-    observeRequestComplete(captureState, {
-      statusCode: 200,
-      responseBody: result,
-      usage: {
-        inputTokens: result.usage?.input_tokens,
-        outputTokens: result.usage?.output_tokens,
-        cachedTokens: result.usage?.input_tokens_details?.cached_tokens,
-        reasoningTokens: result.usage?.output_tokens_details?.reasoning_tokens,
-      },
+    completeResponsesCapture(captureState, result, {
+      inputTokens: result.usage?.input_tokens,
+      outputTokens: result.usage?.output_tokens,
+      cachedTokens: result.usage?.input_tokens_details?.cached_tokens,
+      reasoningTokens: result.usage?.output_tokens_details?.reasoning_tokens,
     })
     return c.json(result)
   } catch (error) {

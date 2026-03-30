@@ -1,7 +1,8 @@
+/* eslint-disable regexp/no-unused-capturing-group, regexp/no-useless-assertions */
 const REDACTED = "[REDACTED]"
 
 const SENSITIVE_KEY_PATTERN =
-  /(?:^|[._-])(authorization|api[_-]?key|access[_-]?token|refresh[_-]?token|token|secret|password|passwd|session[_-]?id|cookie|set-cookie)(?:$|[._-])/i
+  /(?:^|[._-])(?:authorization|api[_-]?key|access[_-]?token|refresh[_-]?token|token|secret|password|passwd|session[_-]?id|cookie|set-cookie)(?:$|[._-])/i
 
 const SENSITIVE_HEADER_NAMES = new Set([
   "authorization",
@@ -23,18 +24,16 @@ const isPlainObject = (value: unknown): value is Record<string, unknown> => {
 
 const redactInlineSecret = (key: string, value: string): string => {
   if (key.toLowerCase().includes("authorization")) {
-    return value.replace(
-      /\bBearer\s+[A-Za-z0-9\-._~+/=]+\b/gi,
-      "Bearer " + REDACTED,
-    )
+    return value.replaceAll(/\bBearer\s+[\w\-.~+/=]+\b/gi, "Bearer " + REDACTED)
   }
 
   return value
-    .replace(
+    .replaceAll(
       /\b(api[_-]?key|access[_-]?token|refresh[_-]?token|token|secret|password|passwd|session[_-]?id|cookie)\b(\s*[:=]\s*)([^\s"'`,;]+)/gi,
-      (_match, name: string, separator: string) => `${name}${separator}${REDACTED}`,
+      (_match, name: string, separator: string) =>
+        `${name}${separator}${REDACTED}`,
     )
-    .replace(/\bBearer\s+[A-Za-z0-9\-._~+/=]+\b/gi, "Bearer " + REDACTED)
+    .replaceAll(/\bBearer\s+[\w\-.~+/=]+\b/gi, "Bearer " + REDACTED)
 }
 
 export function redactText(value: string): string {
@@ -52,21 +51,22 @@ export function redactHeaders(
       continue
     }
 
-    redacted[name] = SENSITIVE_HEADER_NAMES.has(name.toLowerCase())
-      ? REDACTED
-      : redactInlineSecret(name, value)
+    redacted[name] =
+      SENSITIVE_HEADER_NAMES.has(name.toLowerCase()) ? REDACTED : (
+        redactInlineSecret(name, value)
+      )
   }
 
   return redacted
 }
 
-export function redactUnknown<T>(value: T): T {
+export function redactUnknown(value: unknown): unknown {
   if (typeof value === "string") {
-    return redactText(value) as T
+    return redactText(value)
   }
 
   if (Array.isArray(value)) {
-    return value.map((entry) => redactUnknown(entry)) as T
+    return value.map((entry) => redactUnknown(entry))
   }
 
   if (!isPlainObject(value)) {
@@ -84,7 +84,7 @@ export function redactUnknown<T>(value: T): T {
     result[key] = redactUnknown(entry)
   }
 
-  return result as T
+  return result
 }
 
 export { REDACTED }

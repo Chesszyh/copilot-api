@@ -47,7 +47,7 @@ test("stores sessions, request events, and raw bodies", async () => {
       requestStartedAt: 1100,
       statusCode: 200,
       requestBodySize: 11,
-      sanitizedPayload: "{\"ok\":true}",
+      sanitizedPayload: '{"ok":true}',
       rawReference,
     })
 

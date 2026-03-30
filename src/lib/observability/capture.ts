@@ -3,13 +3,14 @@ import type { Context } from "hono"
 import { getObservabilityConfig } from "~/lib/config"
 import { requestContext } from "~/lib/request-context"
 
-import { getObservabilityQueue } from "./queue"
 import type {
   ObservabilityEnqueueMode,
   ObservabilityRouteType,
   RequestCaptureState,
   RequestEventRecord,
 } from "./types"
+
+import { getObservabilityQueue } from "./queue"
 
 const serializeWithLimit = (
   value: unknown,
@@ -93,7 +94,10 @@ export const observeRequestComplete = (
   },
 ): void => {
   const config = getObservabilityConfig()
-  const responseBody = serializeWithLimit(options.responseBody, config.maxBodyBytes)
+  const responseBody = serializeWithLimit(
+    options.responseBody,
+    config.maxBodyBytes,
+  )
   enqueueRecord(
     {
       requestId: state.requestId,

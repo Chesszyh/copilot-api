@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, mock, test } from "bun:test"
+import { beforeEach, describe, expect, test } from "bun:test"
 import { Hono } from "hono"
 
 import { getConfig } from "~/lib/config"
@@ -34,7 +34,7 @@ describe("observability capture", () => {
     app.use(traceIdMiddleware)
 
     app.post("/test", async (c) => {
-      const payload = await c.req.json()
+      const payload = await c.req.json<{ prompt: string }>()
       const capture = observeRequestStart(c, {
         requestId: "req-1",
         sessionId: "session-1",

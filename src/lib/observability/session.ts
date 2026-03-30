@@ -20,6 +20,14 @@ export interface ArtifactPaths {
   pinnedPath: string
 }
 
+export interface BuildArtifactPathsInput {
+  rawDir: string
+  pinnedDir: string
+  sessionId: string
+  requestId: string
+  kind: "request" | "response"
+}
+
 export const sessionIsPinned = (session: {
   pinned?: boolean | null
   pinnedAt?: number | null
@@ -51,22 +59,18 @@ export const normalizeSessionUpsert = (
 })
 
 export const sanitizePathSegment = (value: string): string =>
-  value.replace(/[^a-zA-Z0-9._-]+/g, "_")
+  value.replaceAll(/[^\w.-]+/g, "_")
 
 export const buildArtifactPaths = (
-  rawDir: string,
-  pinnedDir: string,
-  sessionId: string,
-  requestId: string,
-  kind: "request" | "response",
+  input: BuildArtifactPathsInput,
 ): ArtifactPaths => {
-  const safeSessionId = sanitizePathSegment(sessionId)
-  const safeRequestId = sanitizePathSegment(requestId)
-  const fileName = `${safeRequestId}-${kind}.body`
+  const safeSessionId = sanitizePathSegment(input.sessionId)
+  const safeRequestId = sanitizePathSegment(input.requestId)
+  const fileName = `${safeRequestId}-${input.kind}.body`
   const relativePath = path.join(safeSessionId, fileName)
 
   return {
-    sourcePath: path.join(rawDir, relativePath),
-    pinnedPath: path.join(pinnedDir, relativePath),
+    sourcePath: path.join(input.rawDir, relativePath),
+    pinnedPath: path.join(input.pinnedDir, relativePath),
   }
 }

@@ -1,8 +1,11 @@
+/* eslint-disable max-lines, max-lines-per-function, complexity, @typescript-eslint/no-deprecated */
 import { Database } from "bun:sqlite"
 import fs from "node:fs"
 import path from "node:path"
 
 import { PATHS } from "~/lib/paths"
+
+import type { ObservabilityRawReference, RequestEventRecord } from "./types"
 
 import {
   buildArtifactPaths,
@@ -11,10 +14,6 @@ import {
   type SessionUpsertInput,
   type StoredSessionRecord,
 } from "./session"
-import type {
-  ObservabilityRawReference,
-  RequestEventRecord,
-} from "./types"
 
 export interface ObservabilityStorageOptions {
   baseDir?: string
@@ -54,6 +53,22 @@ export interface PurgeResult {
   deletedArtifacts: number
 }
 
+export interface ObservabilitySummary {
+  sessionCount: number
+  requestCount: number
+  pinnedSessionCount: number
+  failedRequestCount: number
+}
+
+export interface SessionListItem extends StoredSessionRecord {
+  requestCount: number
+}
+
+export interface SessionDetail {
+  session: StoredSessionRecord
+  requests: Array<StoredRequestEvent>
+}
+
 interface ResolvedStoragePaths {
   dbPath: string
   rawDir: string
@@ -62,7 +77,9 @@ interface ResolvedStoragePaths {
 
 const DEFAULT_TIME = () => Date.now()
 
-const resolvePaths = (options: ObservabilityStorageOptions): ResolvedStoragePaths => {
+const resolvePaths = (
+  options: ObservabilityStorageOptions,
+): ResolvedStoragePaths => {
   if (options.baseDir) {
     const observabilityDir = path.join(options.baseDir, "observability")
     return {
@@ -83,13 +100,13 @@ const ensureDir = (dirPath: string): void => {
   fs.mkdirSync(dirPath, { recursive: true })
 }
 
-const fromJson = <T>(value: string | null | undefined): T | null => {
+const fromJson = (value: string | null | undefined): unknown => {
   if (!value) {
     return null
   }
 
   try {
-    return JSON.parse(value) as T
+    return JSON.parse(value)
   } catch {
     return null
   }
@@ -109,7 +126,8 @@ const serializeRawReference = (
 
 const deserializeRawReference = (
   value: string | null | undefined,
-): ObservabilityRawReference | null => fromJson<ObservabilityRawReference>(value)
+): ObservabilityRawReference | null =>
+  fromJson(value) as ObservabilityRawReference | null
 
 const readRawReferencePath = (
   reference: ObservabilityRawReference,
@@ -475,6 +493,80 @@ export function createObservabilityStorage(
     WHERE request_id = $requestId AND kind = $kind
   `)
 
+  const clearSessionPinnedStatement = db.prepare(`
+    UPDATE sessions
+    SET pinned = 0,
+        pinned_at = NULL,
+        updated_at = $updatedAt
+    WHERE session_id = $sessionId
+  `)
+
+  const clearArtifactPinnedStatement = db.prepare(`
+    UPDATE raw_artifacts
+    SET pinned = 0,
+        updated_at = $updatedAt
+    WHERE request_id = $requestId AND kind = $kind
+  `)
+
+  const listSessionsStatement = db.prepare(`
+    SELECT
+      s.session_id AS sessionId,
+      s.root_trace_id AS rootTraceId,
+      s.user_id AS userId,
+      s.client_type AS clientType,
+      s.started_at AS startedAt,
+      s.ended_at AS endedAt,
+      s.status,
+      s.pinned,
+      s.pinned_at AS pinnedAt,
+      s.updated_at AS updatedAt,
+      COUNT(r.request_id) AS requestCount
+    FROM sessions s
+    LEFT JOIN request_events r ON r.session_id = s.session_id
+    GROUP BY s.session_id
+    ORDER BY s.updated_at DESC
+    LIMIT $limit OFFSET $offset
+  `)
+
+  const listRequestsBySessionStatement = db.prepare(`
+    SELECT
+      request_id AS requestId,
+      session_id AS sessionId,
+      trace_id AS traceId,
+      route_type AS routeType,
+      method,
+      path,
+      model,
+      stream,
+      request_started_at AS requestStartedAt,
+      first_token_at AS firstTokenAt,
+      request_finished_at AS requestFinishedAt,
+      status_code AS statusCode,
+      error_type AS errorType,
+      input_tokens AS inputTokens,
+      output_tokens AS outputTokens,
+      cached_tokens AS cachedTokens,
+      reasoning_tokens AS reasoningTokens,
+      request_body_size AS requestBodySize,
+      response_body_size AS responseBodySize,
+      sanitized_payload AS sanitizedPayload,
+      sanitized_response AS sanitizedResponse,
+      raw_reference_json AS rawReferenceJson,
+      created_at AS createdAt,
+      updated_at AS updatedAt
+    FROM request_events
+    WHERE session_id = $sessionId
+    ORDER BY request_started_at ASC
+  `)
+
+  const summaryStatement = db.prepare(`
+    SELECT
+      (SELECT COUNT(*) FROM sessions) AS sessionCount,
+      (SELECT COUNT(*) FROM request_events) AS requestCount,
+      (SELECT COUNT(*) FROM sessions WHERE pinned = 1) AS pinnedSessionCount,
+      (SELECT COUNT(*) FROM request_events WHERE error_type IS NOT NULL OR status_code >= 400) AS failedRequestCount
+  `)
+
   const storage = {
     upsertSession(input: SessionUpsertInput): StoredSessionRecord {
       const now = input.updatedAt ?? DEFAULT_TIME()
@@ -491,7 +583,7 @@ export function createObservabilityStorage(
         $pinned: session.pinned ? 1 : 0,
         $pinnedAt: session.pinnedAt,
         $updatedAt: session.updatedAt,
-      })
+      } as never)
 
       return session
     },
@@ -550,7 +642,7 @@ export function createObservabilityStorage(
         $rawReferenceJson: serializeRawReference(event.rawReference),
         $createdAt: event.createdAt,
         $updatedAt: event.updatedAt,
-      })
+      } as never)
 
       return event
     },
@@ -576,21 +668,21 @@ export function createObservabilityStorage(
     writeRawBody(input: RawBodyInput): ObservabilityRawReference {
       const session = storage.getSession(input.sessionId)
       const sessionPinned = session ? sessionIsPinned(session) : false
-      const { sourcePath, pinnedPath } = buildArtifactPaths(
-        paths.rawDir,
-        paths.pinnedDir,
-        input.sessionId,
-        input.requestId,
-        input.kind,
-      )
+      const { sourcePath, pinnedPath } = buildArtifactPaths({
+        rawDir: paths.rawDir,
+        pinnedDir: paths.pinnedDir,
+        sessionId: input.sessionId,
+        requestId: input.requestId,
+        kind: input.kind,
+      })
       const targetPath = sessionPinned ? pinnedPath : sourcePath
 
       writeBodyFile(targetPath, input.body)
 
       const reference: ObservabilityRawReference =
-        input.kind === "request"
-          ? { bodyPath: targetPath, pinned: sessionPinned }
-          : { responsePath: targetPath, pinned: sessionPinned }
+        input.kind === "request" ?
+          { bodyPath: targetPath, pinned: sessionPinned }
+        : { responsePath: targetPath, pinned: sessionPinned }
 
       upsertRawArtifact.run({
         $requestId: input.requestId,
@@ -601,7 +693,7 @@ export function createObservabilityStorage(
         $pinned: sessionPinned ? 1 : 0,
         $createdAt: input.createdAt ?? DEFAULT_TIME(),
         $updatedAt: input.createdAt ?? DEFAULT_TIME(),
-      })
+      } as never)
 
       return reference
     },
@@ -652,11 +744,11 @@ export function createObservabilityStorage(
         $sessionId: sessionId,
         $pinnedAt: pinnedAt,
         $updatedAt: pinnedAt,
-      })
+      } as never)
 
       const artifacts = listSessionArtifactsStatement.all({
         $sessionId: sessionId,
-      }) as RawArtifactRecord[]
+      }) as Array<RawArtifactRecord>
 
       for (const artifact of artifacts) {
         if (artifact.pinned) {
@@ -667,23 +759,107 @@ export function createObservabilityStorage(
           continue
         }
 
-        const { pinnedPath } = buildArtifactPaths(
-          paths.rawDir,
-          paths.pinnedDir,
-          sessionId,
-          artifact.requestId,
-          artifact.kind,
-        )
+        const { pinnedPath } = buildArtifactPaths({
+          rawDir: paths.rawDir,
+          pinnedDir: paths.pinnedDir,
+          sessionId: sessionId,
+          requestId: artifact.requestId,
+          kind: artifact.kind,
+        })
         copyBodyFile(artifact.sourcePath, pinnedPath)
         setArtifactPinnedStatement.run({
           $requestId: artifact.requestId,
           $kind: artifact.kind,
           $pinnedPath: pinnedPath,
           $updatedAt: pinnedAt,
-        })
+        } as never)
       }
 
       return true
+    },
+
+    unpinSession(
+      sessionId: string,
+      updatedAt: number = DEFAULT_TIME(),
+    ): boolean {
+      const session = storage.getSession(sessionId)
+      if (!session) {
+        return false
+      }
+
+      clearSessionPinnedStatement.run({
+        $sessionId: sessionId,
+        $updatedAt: updatedAt,
+      } as never)
+
+      const artifacts = listSessionArtifactsStatement.all({
+        $sessionId: sessionId,
+      }) as Array<RawArtifactRecord>
+      for (const artifact of artifacts) {
+        clearArtifactPinnedStatement.run({
+          $requestId: artifact.requestId,
+          $kind: artifact.kind,
+          $updatedAt: updatedAt,
+        } as never)
+      }
+
+      return true
+    },
+
+    setSessionPinned(sessionId: string, pinned: boolean): boolean {
+      return pinned ?
+          storage.pinSession(sessionId)
+        : storage.unpinSession(sessionId)
+    },
+
+    listSessions(
+      options: { limit?: number; offset?: number } = {},
+    ): Array<SessionListItem> {
+      const rows = listSessionsStatement.all({
+        $limit: options.limit ?? 50,
+        $offset: options.offset ?? 0,
+      }) as Array<SessionListItem>
+
+      return rows.map((row) => ({
+        ...row,
+        pinned: toBoolean(row.pinned),
+      }))
+    },
+
+    getSessionDetail(sessionId: string): SessionDetail | null {
+      const session = storage.getSession(sessionId)
+      if (!session) {
+        return null
+      }
+
+      const rows = listRequestsBySessionStatement.all({
+        $sessionId: sessionId,
+      }) as Array<
+        Omit<StoredRequestEvent, "rawReference"> & {
+          rawReferenceJson: string | null
+        }
+      >
+
+      return {
+        session,
+        requests: rows.map((row) => ({
+          ...row,
+          stream: toBoolean(row.stream),
+          rawReference: deserializeRawReference(row.rawReferenceJson),
+        })),
+      }
+    },
+
+    getSummary(): ObservabilitySummary {
+      const row = summaryStatement.get() as ObservabilitySummary | undefined
+      return (
+        row ?? {
+          sessionCount: 0,
+          requestCount: 0,
+          pinnedSessionCount: 0,
+          failedRequestCount: 0,
+        }
+      )
     },
 
     purgeExpired({
@@ -702,10 +878,11 @@ export function createObservabilityStorage(
 
       const expiredArtifacts = getExpiredArtifactsStatement.all({
         $cutoff: cutoff,
-      }) as RawArtifactRecord[]
+      }) as Array<RawArtifactRecord>
       for (const artifact of expiredArtifacts) {
         const session = storage.getSession(artifact.sessionId)
-        if (artifact.pinned || sessionIsPinned(session ?? { updatedAt: 0 })) {
+        const sessionProbe = session ?? { pinned: false, pinnedAt: null }
+        if (artifact.pinned || sessionIsPinned(sessionProbe)) {
           continue
         }
 
@@ -713,16 +890,18 @@ export function createObservabilityStorage(
           fs.rmSync(artifact.sourcePath, { force: true })
         }
 
-        if (artifact.pinnedPath && artifact.pinnedPath !== artifact.sourcePath) {
-          if (fs.existsSync(artifact.pinnedPath)) {
-            fs.rmSync(artifact.pinnedPath, { force: true })
-          }
+        if (
+          artifact.pinnedPath
+          && artifact.pinnedPath !== artifact.sourcePath
+          && fs.existsSync(artifact.pinnedPath)
+        ) {
+          fs.rmSync(artifact.pinnedPath, { force: true })
         }
 
         deleteRawArtifactStatement.run({
           $requestId: artifact.requestId,
           $kind: artifact.kind,
-        })
+        } as never)
         result.deletedArtifacts++
       }
 
@@ -730,20 +909,27 @@ export function createObservabilityStorage(
         $cutoff: cutoff,
       }) as Array<{ requestId: string; sessionId: string | null }>
       for (const event of expiredRequestEvents) {
-        const session = event.sessionId ? storage.getSession(event.sessionId) : null
-        if (sessionIsPinned(session ?? { updatedAt: 0 })) {
+        const session =
+          event.sessionId ? storage.getSession(event.sessionId) : null
+        const sessionProbe = session ?? { pinned: false, pinnedAt: null }
+        if (sessionIsPinned(sessionProbe)) {
           continue
         }
 
         deleteRequestEventStatement.run({
           $requestId: event.requestId,
-        })
+        } as never)
         result.deletedRequestEvents++
       }
 
       const expiredSessions = getExpiredSessionsStatement.all({
         $cutoff: cutoff,
-      }) as Array<{ sessionId: string; pinned: number; pinnedAt: number | null; updatedAt: number }>
+      }) as Array<{
+        sessionId: string
+        pinned: number
+        pinnedAt: number | null
+        updatedAt: number
+      }>
 
       for (const session of expiredSessions) {
         if (session.pinned || session.pinnedAt) {
@@ -752,7 +938,7 @@ export function createObservabilityStorage(
 
         deleteSessionStatement.run({
           $sessionId: session.sessionId,
-        })
+        } as never)
         result.deletedSessions++
       }
 

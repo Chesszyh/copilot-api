@@ -74,7 +74,9 @@ export class ObservabilityQueue {
 
 let queue: ObservabilityQueue | null = null
 
-export const initObservabilityQueue = (capacity: number): ObservabilityQueue => {
+export const initObservabilityQueue = (
+  capacity: number,
+): ObservabilityQueue => {
   queue = new ObservabilityQueue(capacity)
   return queue
 }

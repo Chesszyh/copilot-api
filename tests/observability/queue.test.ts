@@ -1,7 +1,8 @@
 import { describe, expect, test } from "bun:test"
 
-import { ObservabilityQueue } from "~/lib/observability/queue"
 import type { ObservabilityEnvelope } from "~/lib/observability/types"
+
+import { ObservabilityQueue } from "~/lib/observability/queue"
 
 const event = (
   id: string,
