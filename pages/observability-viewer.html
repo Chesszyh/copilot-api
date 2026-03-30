@@ -1,0 +1,1178 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Observability Viewer</title>
+    <meta
+      name="description"
+      content="本地 observability 会话和请求查看器，不直接请求 GitHub Copilot。"
+    />
+    <meta name="color-scheme" content="dark" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Fira+Code:wght@400;500;600;700&family=Fira+Sans:wght@400;500;600;700;800&display=swap"
+      rel="stylesheet"
+    />
+    <style>
+      :root {
+        --bg: #07111f;
+        --bg-2: #0d1a2d;
+        --bg-3: #13233b;
+        --panel: rgba(12, 22, 38, 0.84);
+        --panel-strong: rgba(18, 33, 56, 0.96);
+        --border: rgba(126, 169, 255, 0.18);
+        --border-strong: rgba(255, 191, 84, 0.28);
+        --text: #e6edf7;
+        --muted: #93a8c4;
+        --muted-2: #6f87a8;
+        --blue: #4f8cff;
+        --blue-2: #79a9ff;
+        --amber: #ffb84d;
+        --amber-2: #ffd08a;
+        --danger: #ff6d6d;
+        --success: #46d39a;
+        --shadow: 0 28px 80px rgba(0, 0, 0, 0.42);
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      html {
+        scroll-behavior: smooth;
+      }
+
+      body {
+        margin: 0;
+        font-family: "Fira Sans", system-ui, sans-serif;
+        color: var(--text);
+        background:
+          radial-gradient(circle at top left, rgba(79, 140, 255, 0.24), transparent 32%),
+          radial-gradient(circle at 84% 16%, rgba(255, 184, 77, 0.16), transparent 22%),
+          linear-gradient(180deg, #050b15 0%, var(--bg) 42%, #050b15 100%);
+        min-height: 100vh;
+      }
+
+      body::before {
+        content: "";
+        position: fixed;
+        inset: 0;
+        pointer-events: none;
+        background:
+          linear-gradient(rgba(255, 255, 255, 0.02) 1px, transparent 1px),
+          linear-gradient(90deg, rgba(255, 255, 255, 0.02) 1px, transparent 1px);
+        background-size: 48px 48px;
+        mask-image: linear-gradient(180deg, rgba(0, 0, 0, 0.9), transparent 88%);
+        opacity: 0.35;
+      }
+
+      .shell {
+        position: relative;
+        z-index: 1;
+        max-width: 1540px;
+        margin: 0 auto;
+        padding: 28px 22px 40px;
+      }
+
+      .hero {
+        display: grid;
+        gap: 18px;
+        padding: 26px;
+        border: 1px solid var(--border);
+        border-radius: 28px;
+        background:
+          linear-gradient(135deg, rgba(18, 33, 56, 0.96), rgba(10, 18, 30, 0.88)),
+          linear-gradient(180deg, rgba(79, 140, 255, 0.08), transparent);
+        box-shadow: var(--shadow);
+      }
+
+      .eyebrow {
+        display: inline-flex;
+        align-items: center;
+        gap: 10px;
+        width: fit-content;
+        padding: 8px 12px;
+        border-radius: 999px;
+        border: 1px solid rgba(255, 255, 255, 0.08);
+        background: rgba(255, 255, 255, 0.03);
+        color: var(--amber-2);
+        font-family: "Fira Code", monospace;
+        font-size: 12px;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+      }
+
+      h1,
+      h2,
+      h3,
+      p {
+        margin: 0;
+      }
+
+      h1 {
+        font-size: clamp(2rem, 4vw, 3.6rem);
+        line-height: 1;
+        letter-spacing: -0.04em;
+        max-width: 11ch;
+      }
+
+      .hero-copy {
+        display: grid;
+        gap: 12px;
+        max-width: 840px;
+      }
+
+      .hero-copy p {
+        color: var(--muted);
+        font-size: 1rem;
+        line-height: 1.65;
+      }
+
+      .hero-meta {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 12px;
+        align-items: center;
+      }
+
+      .badge {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        padding: 9px 12px;
+        border-radius: 999px;
+        border: 1px solid var(--border);
+        background: rgba(255, 255, 255, 0.03);
+        color: var(--muted);
+        font-family: "Fira Code", monospace;
+        font-size: 12px;
+      }
+
+      .badge strong {
+        color: var(--text);
+      }
+
+      .badge--accent {
+        border-color: rgba(255, 184, 77, 0.3);
+        color: var(--amber-2);
+      }
+
+      .hero-actions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 12px;
+      }
+
+      .button {
+        appearance: none;
+        border: 1px solid transparent;
+        border-radius: 14px;
+        padding: 11px 16px;
+        font: inherit;
+        font-weight: 700;
+        color: var(--text);
+        background: rgba(255, 255, 255, 0.04);
+        cursor: pointer;
+        transition:
+          transform 180ms ease,
+          border-color 180ms ease,
+          background 180ms ease,
+          color 180ms ease;
+      }
+
+      .button:hover {
+        transform: translateY(-1px);
+        border-color: rgba(121, 169, 255, 0.4);
+        background: rgba(79, 140, 255, 0.12);
+      }
+
+      .button:focus-visible {
+        outline: 2px solid var(--amber);
+        outline-offset: 2px;
+      }
+
+      .button--primary {
+        background: linear-gradient(135deg, var(--blue), var(--blue-2));
+        color: #08111c;
+      }
+
+      .button--primary:hover {
+        border-color: rgba(255, 255, 255, 0.24);
+        background: linear-gradient(135deg, #6d99ff, #9cbaff);
+      }
+
+      .button--danger {
+        background: rgba(255, 109, 109, 0.12);
+        border-color: rgba(255, 109, 109, 0.2);
+        color: #ffd7d7;
+      }
+
+      .button:disabled {
+        opacity: 0.5;
+        cursor: not-allowed;
+        transform: none;
+      }
+
+      .layout {
+        margin-top: 20px;
+        display: grid;
+        gap: 18px;
+      }
+
+      .summary-grid {
+        display: grid;
+        gap: 14px;
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+      }
+
+      .summary-card,
+      .panel {
+        border: 1px solid var(--border);
+        border-radius: 24px;
+        background: var(--panel);
+        box-shadow: var(--shadow);
+      }
+
+      .summary-card {
+        padding: 18px 18px 16px;
+        min-height: 138px;
+        display: grid;
+        gap: 12px;
+        align-content: space-between;
+      }
+
+      .summary-card__label {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 10px;
+        color: var(--muted);
+        font-size: 0.92rem;
+      }
+
+      .summary-card__value {
+        font-family: "Fira Code", monospace;
+        font-size: clamp(1.9rem, 4vw, 2.8rem);
+        line-height: 1;
+        color: var(--text);
+      }
+
+      .summary-card__hint {
+        color: var(--muted-2);
+        font-size: 0.88rem;
+      }
+
+      .workspace {
+        display: grid;
+        gap: 18px;
+        grid-template-columns: minmax(320px, 380px) minmax(0, 1fr);
+      }
+
+      .panel {
+        padding: 18px;
+      }
+
+      .panel-header {
+        display: flex;
+        align-items: flex-start;
+        justify-content: space-between;
+        gap: 12px;
+        margin-bottom: 14px;
+      }
+
+      .panel-title {
+        display: grid;
+        gap: 6px;
+      }
+
+      .panel-title h2 {
+        font-size: 1.2rem;
+        letter-spacing: -0.03em;
+      }
+
+      .panel-title p {
+        color: var(--muted);
+        font-size: 0.92rem;
+        line-height: 1.55;
+      }
+
+      .stack {
+        display: grid;
+        gap: 12px;
+      }
+
+      .toolbar {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px;
+        margin-bottom: 14px;
+      }
+
+      .session-list {
+        display: grid;
+        gap: 10px;
+      }
+
+      .session-item {
+        width: 100%;
+        text-align: left;
+        border: 1px solid rgba(255, 255, 255, 0.07);
+        border-radius: 18px;
+        padding: 14px 15px;
+        background: rgba(255, 255, 255, 0.03);
+        color: var(--text);
+        cursor: pointer;
+        transition:
+          transform 180ms ease,
+          border-color 180ms ease,
+          background 180ms ease;
+      }
+
+      .session-item:hover {
+        transform: translateY(-1px);
+        border-color: rgba(255, 184, 77, 0.28);
+        background: rgba(255, 184, 77, 0.06);
+      }
+
+      .session-item:focus-visible {
+        outline: 2px solid var(--amber);
+        outline-offset: 2px;
+      }
+
+      .session-item[aria-pressed="true"] {
+        border-color: rgba(79, 140, 255, 0.5);
+        background: rgba(79, 140, 255, 0.14);
+      }
+
+      .session-item__top {
+        display: flex;
+        justify-content: space-between;
+        gap: 12px;
+        align-items: baseline;
+      }
+
+      .session-item__id {
+        font-family: "Fira Code", monospace;
+        font-size: 0.92rem;
+        word-break: break-all;
+      }
+
+      .session-item__meta {
+        color: var(--muted);
+        font-size: 0.84rem;
+        display: flex;
+        gap: 10px;
+        flex-wrap: wrap;
+        margin-top: 8px;
+      }
+
+      .pill {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        padding: 5px 8px;
+        border-radius: 999px;
+        font-size: 0.8rem;
+        border: 1px solid rgba(255, 255, 255, 0.08);
+        background: rgba(255, 255, 255, 0.03);
+      }
+
+      .pill--success {
+        color: #aef1d3;
+        border-color: rgba(70, 211, 154, 0.2);
+        background: rgba(70, 211, 154, 0.08);
+      }
+
+      .pill--danger {
+        color: #ffd1d1;
+        border-color: rgba(255, 109, 109, 0.22);
+        background: rgba(255, 109, 109, 0.08);
+      }
+
+      .pill--warning {
+        color: #ffe0b3;
+        border-color: rgba(255, 184, 77, 0.22);
+        background: rgba(255, 184, 77, 0.08);
+      }
+
+      .detail-grid {
+        display: grid;
+        gap: 18px;
+      }
+
+      .detail-empty {
+        min-height: 360px;
+        display: grid;
+        place-items: center;
+        text-align: center;
+        color: var(--muted);
+        border: 1px dashed rgba(255, 255, 255, 0.1);
+        border-radius: 22px;
+        padding: 20px;
+      }
+
+      .detail-content {
+        display: grid;
+        gap: 18px;
+      }
+
+      .detail-meta {
+        display: grid;
+        gap: 14px;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+
+      .field {
+        display: grid;
+        gap: 6px;
+        padding: 14px;
+        border-radius: 18px;
+        background: rgba(255, 255, 255, 0.03);
+        border: 1px solid rgba(255, 255, 255, 0.06);
+      }
+
+      .field__label {
+        color: var(--muted);
+        font-size: 0.82rem;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+      }
+
+      .field__value {
+        font-family: "Fira Code", monospace;
+        font-size: 0.93rem;
+        line-height: 1.5;
+        word-break: break-word;
+      }
+
+      .timeline {
+        display: grid;
+        gap: 12px;
+      }
+
+      .timeline-item {
+        border-radius: 18px;
+        padding: 14px;
+        border: 1px solid rgba(255, 255, 255, 0.06);
+        background: rgba(255, 255, 255, 0.03);
+      }
+
+      .timeline-item__top {
+        display: flex;
+        justify-content: space-between;
+        gap: 12px;
+        align-items: baseline;
+        margin-bottom: 10px;
+      }
+
+      .timeline-item__title {
+        font-family: "Fira Code", monospace;
+        font-size: 0.92rem;
+      }
+
+      .timeline-item__body {
+        display: grid;
+        gap: 8px;
+        color: var(--muted);
+        font-size: 0.92rem;
+        line-height: 1.6;
+      }
+
+      .code {
+        font-family: "Fira Code", monospace;
+        font-size: 0.84rem;
+        white-space: pre-wrap;
+        word-break: break-word;
+        color: #dce7f8;
+      }
+
+      .mock-panel {
+        display: grid;
+        gap: 14px;
+      }
+
+      .mock-controls {
+        display: grid;
+        gap: 12px;
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+      }
+
+      .control {
+        display: grid;
+        gap: 8px;
+      }
+
+      .control label {
+        color: var(--muted);
+        font-size: 0.84rem;
+      }
+
+      .control input,
+      .control select {
+        width: 100%;
+        border-radius: 14px;
+        border: 1px solid rgba(255, 255, 255, 0.09);
+        padding: 11px 12px;
+        background: rgba(8, 16, 28, 0.88);
+        color: var(--text);
+        font: inherit;
+      }
+
+      .control input:focus-visible,
+      .control select:focus-visible {
+        outline: 2px solid var(--amber);
+        outline-offset: 2px;
+      }
+
+      .mock-actions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px;
+      }
+
+      .status-line {
+        color: var(--muted);
+        font-size: 0.9rem;
+        min-height: 1.4em;
+      }
+
+      .visually-hidden {
+        position: absolute;
+        width: 1px;
+        height: 1px;
+        padding: 0;
+        margin: -1px;
+        overflow: hidden;
+        clip: rect(0, 0, 0, 0);
+        white-space: nowrap;
+        border: 0;
+      }
+
+      .empty-state {
+        color: var(--muted);
+      }
+
+      @media (max-width: 1200px) {
+        .summary-grid {
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+        }
+
+        .workspace {
+          grid-template-columns: 1fr;
+        }
+
+        .mock-controls {
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+        }
+      }
+
+      @media (max-width: 720px) {
+        .shell {
+          padding: 18px 14px 28px;
+        }
+
+        .hero,
+        .panel,
+        .summary-card {
+          border-radius: 20px;
+        }
+
+        .summary-grid,
+        .detail-meta,
+        .mock-controls {
+          grid-template-columns: 1fr;
+        }
+      }
+
+      @media (prefers-reduced-motion: reduce) {
+        html {
+          scroll-behavior: auto;
+        }
+
+        *,
+        *::before,
+        *::after {
+          animation: none !important;
+          transition: none !important;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main class="shell">
+      <section class="hero" aria-labelledby="page-title">
+        <div class="hero-copy">
+          <span class="eyebrow">Observability Viewer</span>
+          <h1 id="page-title">本地会话与请求观测面板</h1>
+          <p>
+            只读取本地 observability API，不直接请求 GitHub Copilot。你可以在这里查看
+            session、请求时间线、pin 状态，并在调试模式下生成 mock 数据。
+          </p>
+          <div class="hero-meta" id="hero-meta">
+            <span class="badge" id="api-badge">
+              <strong>API</strong>
+              <span>/observability/*</span>
+            </span>
+            <span class="badge badge--accent" id="mock-badge">
+              <strong>Mock</strong>
+              <span id="mock-badge-text">disabled</span>
+            </span>
+          </div>
+        </div>
+        <div class="hero-actions">
+          <button class="button button--primary" id="refresh-all" type="button">
+            刷新概览
+          </button>
+          <button class="button" id="refresh-sessions" type="button">
+            刷新会话列表
+          </button>
+        </div>
+        <div class="status-line" id="status-line" role="status" aria-live="polite"></div>
+      </section>
+
+      <section class="layout" aria-label="观测数据概览">
+        <div class="summary-grid" id="summary-grid">
+          <article class="summary-card">
+            <div class="summary-card__label">
+              <span>Sessions</span>
+              <span class="pill">总量</span>
+            </div>
+            <div class="summary-card__value" id="summary-session-count">-</div>
+            <div class="summary-card__hint">已收集的 session 数量</div>
+          </article>
+          <article class="summary-card">
+            <div class="summary-card__label">
+              <span>Requests</span>
+              <span class="pill">轨迹</span>
+            </div>
+            <div class="summary-card__value" id="summary-request-count">-</div>
+            <div class="summary-card__hint">已记录的请求总数</div>
+          </article>
+          <article class="summary-card">
+            <div class="summary-card__label">
+              <span>Failed</span>
+              <span class="pill pill--danger">异常</span>
+            </div>
+            <div class="summary-card__value" id="summary-failed-count">-</div>
+            <div class="summary-card__hint">错误或失败请求数量</div>
+          </article>
+          <article class="summary-card">
+            <div class="summary-card__label">
+              <span>Pinned</span>
+              <span class="pill pill--warning">保留</span>
+            </div>
+            <div class="summary-card__value" id="summary-pinned-count">-</div>
+            <div class="summary-card__hint">被永久保留的 session 数量</div>
+          </article>
+        </div>
+
+        <div class="workspace">
+          <aside class="panel" aria-label="session 列表">
+            <div class="panel-header">
+              <div class="panel-title">
+                <h2>Sessions</h2>
+                <p>按最近更新时间排序。点击任意条目查看详情和请求时间线。</p>
+              </div>
+              <span class="badge" id="session-count-badge">0</span>
+            </div>
+            <div class="toolbar">
+              <button class="button" id="reload-sessions-inline" type="button">
+                重新加载
+              </button>
+            </div>
+            <div class="session-list" id="session-list"></div>
+          </aside>
+
+          <section class="panel" aria-label="session 详情">
+            <div class="panel-header">
+              <div class="panel-title">
+                <h2>Session 详情</h2>
+                <p id="detail-help">
+                  选择 session 之后，这里会展示元信息、pin 操作和请求轨迹。
+                </p>
+              </div>
+              <button class="button button--primary" id="pin-toggle" type="button" disabled>
+                Pin
+              </button>
+            </div>
+
+            <div class="detail-empty" id="detail-empty">
+              <div>
+                <h3 style="margin-bottom: 8px">尚未选择 session</h3>
+                <p>从左侧列表选择一条 session 开始查看。</p>
+              </div>
+            </div>
+
+            <div class="detail-content" id="detail-content" hidden>
+              <div class="detail-meta">
+                <div class="field">
+                  <span class="field__label">Session ID</span>
+                  <span class="field__value" id="detail-session-id"></span>
+                </div>
+                <div class="field">
+                  <span class="field__label">Status</span>
+                  <span class="field__value" id="detail-session-status"></span>
+                </div>
+              <div class="field">
+                <span class="field__label">Client Type</span>
+                <span class="field__value" id="detail-client-type"></span>
+              </div>
+              <div class="field">
+                <span class="field__label">Source / Scenario</span>
+                <span class="field__value" id="detail-source-scenario"></span>
+              </div>
+              <div class="field">
+                <span class="field__label">Updated At</span>
+                <span class="field__value" id="detail-updated-at"></span>
+              </div>
+            </div>
+
+              <div class="field">
+                <span class="field__label">Request Timeline</span>
+                <div class="timeline" id="request-timeline"></div>
+              </div>
+            </div>
+          </section>
+        </div>
+
+        <section class="panel mock-panel" id="mock-panel" hidden aria-label="mock 调试区">
+          <div class="panel-header">
+            <div class="panel-title">
+              <h2>Mock 调试区</h2>
+              <p>
+                仅在 `debugMockEnabled` 打开时显示。这里用于生成覆盖型与真实感样例数据。
+              </p>
+            </div>
+            <span class="badge badge--accent">Debug</span>
+          </div>
+
+          <form id="mock-form" class="stack">
+            <div class="mock-controls">
+              <div class="control">
+                <label for="mock-preset">Preset</label>
+                <select id="mock-preset" name="preset">
+                  <option value="coverage">coverage</option>
+                  <option value="realistic">realistic</option>
+                </select>
+              </div>
+              <div class="control">
+                <label for="mock-count">Count</label>
+                <input id="mock-count" name="count" type="number" min="1" max="50" value="6" />
+              </div>
+              <div class="control">
+                <label for="mock-seed">Seed</label>
+                <input id="mock-seed" name="seed" type="text" placeholder="optional" />
+              </div>
+              <div class="control">
+                <label for="mock-reset-before">Reset Before Generate</label>
+                <select id="mock-reset-before" name="resetBeforeGenerate">
+                  <option value="true">true</option>
+                  <option value="false">false</option>
+                </select>
+              </div>
+            </div>
+
+            <div class="mock-actions">
+              <button class="button button--primary" type="submit">生成样例</button>
+              <button class="button button--danger" id="mock-reset" type="button">
+                清空 mock 数据
+              </button>
+            </div>
+          </form>
+
+          <div class="status-line" id="mock-status" role="status" aria-live="polite"></div>
+        </section>
+      </section>
+    </main>
+
+    <script>
+      window.__OBSERVABILITY_VIEWER_CONFIG__ = __OBSERVABILITY_VIEWER_CONFIG__;
+    </script>
+    <script>
+      const viewerConfig = window.__OBSERVABILITY_VIEWER_CONFIG__ ?? {
+        debugMockEnabled: false,
+      };
+
+      const state = {
+        summary: null,
+        sessions: [],
+        selectedSessionId: null,
+        selectedSession: null,
+        loading: false,
+        detailLoading: false,
+      };
+
+      const elements = {
+        statusLine: document.getElementById("status-line"),
+        mockPanel: document.getElementById("mock-panel"),
+        mockBadgeText: document.getElementById("mock-badge-text"),
+        summarySessionCount: document.getElementById("summary-session-count"),
+        summaryRequestCount: document.getElementById("summary-request-count"),
+        summaryFailedCount: document.getElementById("summary-failed-count"),
+        summaryPinnedCount: document.getElementById("summary-pinned-count"),
+        sessionCountBadge: document.getElementById("session-count-badge"),
+        sessionList: document.getElementById("session-list"),
+        detailEmpty: document.getElementById("detail-empty"),
+        detailContent: document.getElementById("detail-content"),
+        detailSessionId: document.getElementById("detail-session-id"),
+        detailSessionStatus: document.getElementById("detail-session-status"),
+        detailClientType: document.getElementById("detail-client-type"),
+        detailSourceScenario: document.getElementById("detail-source-scenario"),
+        detailUpdatedAt: document.getElementById("detail-updated-at"),
+        requestTimeline: document.getElementById("request-timeline"),
+        detailHelp: document.getElementById("detail-help"),
+        pinToggle: document.getElementById("pin-toggle"),
+        refreshAll: document.getElementById("refresh-all"),
+        refreshSessions: document.getElementById("refresh-sessions"),
+        reloadSessionsInline: document.getElementById("reload-sessions-inline"),
+        mockStatus: document.getElementById("mock-status"),
+        mockForm: document.getElementById("mock-form"),
+        mockPreset: document.getElementById("mock-preset"),
+        mockCount: document.getElementById("mock-count"),
+        mockSeed: document.getElementById("mock-seed"),
+        mockResetBefore: document.getElementById("mock-reset-before"),
+        mockReset: document.getElementById("mock-reset"),
+      };
+
+      const dateFormatter = new Intl.DateTimeFormat("zh-CN", {
+        dateStyle: "medium",
+        timeStyle: "medium",
+      });
+
+      const numberFormatter = new Intl.NumberFormat("zh-CN");
+
+      function escapeHtml(value) {
+        return String(value)
+          .replaceAll("&", "&amp;")
+          .replaceAll("<", "&lt;")
+          .replaceAll(">", "&gt;")
+          .replaceAll('"', "&quot;")
+          .replaceAll("'", "&#39;");
+      }
+
+      function formatDateTime(value) {
+        if (!value) {
+          return "—";
+        }
+        const numeric = Number(value);
+        if (Number.isFinite(numeric)) {
+          return dateFormatter.format(new Date(numeric));
+        }
+        const parsed = new Date(value);
+        if (!Number.isNaN(parsed.getTime())) {
+          return dateFormatter.format(parsed);
+        }
+        return String(value);
+      }
+
+      function formatMaybeNumber(value) {
+        if (value === null || value === undefined || value === "") {
+          return "—";
+        }
+        const numeric = Number(value);
+        return Number.isFinite(numeric) ? numberFormatter.format(numeric) : String(value);
+      }
+
+      function setStatus(message, tone = "muted") {
+        elements.statusLine.textContent = message;
+        elements.statusLine.style.color =
+          tone === "error" ? "var(--danger)" : tone === "success" ? "var(--success)" : "var(--muted)";
+      }
+
+      function setMockStatus(message, tone = "muted") {
+        elements.mockStatus.textContent = message;
+        elements.mockStatus.style.color =
+          tone === "error" ? "var(--danger)" : tone === "success" ? "var(--success)" : "var(--muted)";
+      }
+
+      async function fetchJson(path, options = {}) {
+        const response = await fetch(path, {
+          headers: {
+            "Content-Type": "application/json",
+            ...(options.headers || {}),
+          },
+          ...options,
+        });
+
+        const text = await response.text();
+        let body = null;
+        if (text) {
+          try {
+            body = JSON.parse(text);
+          } catch {
+            body = { message: text };
+          }
+        }
+        if (!response.ok) {
+          const message = body?.error ?? body?.message ?? response.statusText;
+          throw new Error(message);
+        }
+        return body;
+      }
+
+      function renderSummary(summary) {
+        elements.summarySessionCount.textContent = formatMaybeNumber(summary?.sessionCount);
+        elements.summaryRequestCount.textContent = formatMaybeNumber(summary?.requestCount);
+        elements.summaryFailedCount.textContent = formatMaybeNumber(summary?.failedRequestCount);
+        elements.summaryPinnedCount.textContent = formatMaybeNumber(summary?.pinnedSessionCount);
+      }
+
+      function renderSessionList() {
+        elements.sessionList.innerHTML = "";
+        elements.sessionCountBadge.textContent = String(state.sessions.length);
+
+        if (state.sessions.length === 0) {
+          const empty = document.createElement("div");
+          empty.className = "detail-empty";
+          empty.style.minHeight = "180px";
+          empty.innerHTML = "<div><h3 style='margin-bottom:8px'>暂无 session</h3><p>先采集一些请求，或者在 debug 模式下生成 mock 数据。</p></div>";
+          elements.sessionList.appendChild(empty);
+          return;
+        }
+
+        for (const session of state.sessions) {
+          const button = document.createElement("button");
+          button.type = "button";
+          button.className = "session-item";
+          button.setAttribute("aria-pressed", String(session.sessionId === state.selectedSessionId));
+
+          const statusClass =
+            session.status === "failed" ? "pill--danger" :
+            session.status === "completed" ? "pill--success" :
+            "pill--warning";
+
+          button.innerHTML = `
+            <div class="session-item__top">
+              <span class="session-item__id">${escapeHtml(session.sessionId)}</span>
+              <span class="pill ${statusClass}">${escapeHtml(session.status ?? "unknown")}</span>
+            </div>
+            <div class="session-item__meta">
+              <span>${formatMaybeNumber(session.requestCount)} requests</span>
+              <span>${escapeHtml(session.source ?? "live")}</span>
+              <span>${escapeHtml(session.scenario ?? "—")}</span>
+              <span>${session.pinned ? "pinned" : "unpinned"}</span>
+              <span>${formatDateTime(session.updatedAt)}</span>
+            </div>
+          `;
+
+          button.addEventListener("click", () => {
+            selectSession(session.sessionId);
+          });
+
+          elements.sessionList.appendChild(button);
+        }
+      }
+
+      function renderEmptyDetail() {
+        elements.detailEmpty.hidden = false;
+        elements.detailContent.hidden = true;
+        elements.pinToggle.disabled = true;
+        elements.pinToggle.textContent = "Pin";
+      }
+
+      function renderDetail(detail) {
+        if (!detail?.session) {
+          renderEmptyDetail();
+          return;
+        }
+
+        const { session, requests } = detail;
+        elements.detailEmpty.hidden = true;
+        elements.detailContent.hidden = false;
+        elements.pinToggle.disabled = false;
+        elements.pinToggle.textContent = session.pinned ? "Unpin" : "Pin";
+
+        elements.detailSessionId.textContent = session.sessionId ?? "—";
+        elements.detailSessionStatus.innerHTML = `
+          <span class="pill ${
+            session.status === "failed" ? "pill--danger" :
+            session.status === "completed" ? "pill--success" :
+            "pill--warning"
+          }">${escapeHtml(session.status ?? "unknown")}</span>
+          ${session.pinned ? '<span class="pill pill--warning">pinned</span>' : ""}
+        `;
+        elements.detailClientType.textContent = session.clientType ?? "—";
+        elements.detailSourceScenario.textContent = `${session.source ?? "live"} / ${session.scenario ?? "—"}`;
+        elements.detailUpdatedAt.textContent = formatDateTime(session.updatedAt);
+        elements.detailHelp.textContent = `${requests.length} 条请求记录，最后更新时间 ${formatDateTime(session.updatedAt)}。`;
+
+        elements.requestTimeline.innerHTML = "";
+        if (requests.length === 0) {
+          const empty = document.createElement("div");
+          empty.className = "timeline-item";
+          empty.innerHTML = "<div class='timeline-item__body'>这条 session 还没有请求记录。</div>";
+          elements.requestTimeline.appendChild(empty);
+          return;
+        }
+
+        for (const request of requests) {
+          const item = document.createElement("article");
+          item.className = "timeline-item";
+          const statusClass =
+            request.statusCode && request.statusCode >= 400 ? "pill--danger" : "pill--success";
+          item.innerHTML = `
+            <div class="timeline-item__top">
+              <span class="timeline-item__title">${escapeHtml(request.requestId)}</span>
+              <span class="pill ${statusClass}">${escapeHtml(request.routeType)}</span>
+            </div>
+            <div class="timeline-item__body">
+              <div>Model: <span class="code">${escapeHtml(request.model ?? "—")}</span></div>
+              <div>Started: <span class="code">${escapeHtml(formatDateTime(request.requestStartedAt))}</span></div>
+              <div>Finished: <span class="code">${escapeHtml(formatDateTime(request.requestFinishedAt))}</span></div>
+              <div>Tokens: <span class="code">${escapeHtml(
+                `in=${formatMaybeNumber(request.inputTokens)} out=${formatMaybeNumber(request.outputTokens)} cached=${formatMaybeNumber(request.cachedTokens)} reasoning=${formatMaybeNumber(request.reasoningTokens)}`,
+              )}</span></div>
+              <div>Status: <span class="code">${escapeHtml(formatMaybeNumber(request.statusCode))}</span></div>
+              <div>Source: <span class="code">${escapeHtml(request.source ?? "live")}</span></div>
+              <div>Raw: <span class="code">${escapeHtml(request.rawReference ? (request.rawReference.pinned ? "pinned-raw" : "raw") : "sanitized")}</span></div>
+              ${
+                request.sanitizedPayload ?
+                  `<div><div class="field__label" style="margin-bottom:6px">Sanitized Payload</div><div class="code">${escapeHtml(request.sanitizedPayload)}</div></div>`
+                : ""
+              }
+              ${
+                request.sanitizedResponse ?
+                  `<div><div class="field__label" style="margin-bottom:6px">Sanitized Response</div><div class="code">${escapeHtml(request.sanitizedResponse)}</div></div>`
+                : ""
+              }
+            </div>
+          `;
+          elements.requestTimeline.appendChild(item);
+        }
+      }
+
+      async function loadSummary() {
+        const summary = await fetchJson("/observability/summary");
+        state.summary = summary;
+        renderSummary(summary);
+      }
+
+      async function loadSessions() {
+        const sessions = await fetchJson("/observability/sessions?limit=50&offset=0");
+        state.sessions = Array.isArray(sessions) ? sessions : [];
+        renderSessionList();
+
+        if (!state.selectedSessionId || !state.sessions.some((session) => session.sessionId === state.selectedSessionId)) {
+          if (state.sessions.length > 0) {
+            await selectSession(state.sessions[0].sessionId, { skipRenderList: true });
+          } else {
+            state.selectedSessionId = null;
+            state.selectedSession = null;
+            renderEmptyDetail();
+          }
+          renderSessionList();
+        }
+      }
+
+      async function loadSessionDetail(sessionId) {
+        const detail = await fetchJson(`/observability/sessions/${encodeURIComponent(sessionId)}`);
+        state.selectedSession = detail?.session ?? null;
+        renderDetail(detail);
+      }
+
+      async function selectSession(sessionId, options = {}) {
+        state.selectedSessionId = sessionId;
+        if (!options.skipRenderList) {
+          renderSessionList();
+        }
+        setStatus(`加载 session ${sessionId}...`);
+        try {
+          await loadSessionDetail(sessionId);
+          setStatus(`已加载 session ${sessionId}。`, "success");
+        } catch (error) {
+          renderEmptyDetail();
+          setStatus(`加载 session 失败: ${error.message}`, "error");
+        } finally {
+          renderSessionList();
+        }
+      }
+
+      async function reloadAll() {
+        state.loading = true;
+        setStatus("正在刷新 summary 与 session 列表...");
+        try {
+          await Promise.all([loadSummary(), loadSessions()]);
+          setStatus("刷新完成。", "success");
+        } catch (error) {
+          setStatus(`刷新失败: ${error.message}`, "error");
+        } finally {
+          state.loading = false;
+        }
+      }
+
+      async function togglePin() {
+        if (!state.selectedSessionId || !state.selectedSession) {
+          return;
+        }
+
+        const pinned = Boolean(state.selectedSession.pinned);
+        const method = pinned ? "DELETE" : "POST";
+        setStatus(`${pinned ? "解除" : "设置"} pin 中...`);
+        try {
+          await fetchJson(`/observability/pin/${encodeURIComponent(state.selectedSessionId)}`, {
+            method,
+          });
+          await reloadAll();
+          await loadSessionDetail(state.selectedSessionId);
+          setStatus(`session ${pinned ? "已解除 pin" : "已 pin" }。`, "success");
+        } catch (error) {
+          setStatus(`pin 操作失败: ${error.message}`, "error");
+        }
+      }
+
+      async function generateMock(event) {
+        event.preventDefault();
+        const payload = {
+          preset: elements.mockPreset.value,
+          count: Number(elements.mockCount.value || 1),
+          seed: elements.mockSeed.value.trim() || undefined,
+          resetBeforeGenerate: elements.mockResetBefore.value === "true",
+        };
+
+        setMockStatus("正在生成 mock 数据...");
+        try {
+          await fetchJson("/observability/mock/generate", {
+            method: "POST",
+            body: JSON.stringify(payload),
+          });
+          setMockStatus("mock 数据已生成。", "success");
+          await reloadAll();
+        } catch (error) {
+          setMockStatus(`生成失败: ${error.message}`, "error");
+        }
+      }
+
+      async function resetMock() {
+        setMockStatus("正在清空 mock 数据...");
+        try {
+          await fetchJson("/observability/mock/reset", {
+            method: "POST",
+            body: JSON.stringify({}),
+          });
+          setMockStatus("mock 数据已清空。", "success");
+          await reloadAll();
+        } catch (error) {
+          setMockStatus(`清空失败: ${error.message}`, "error");
+        }
+      }
+
+      function applyViewerConfig() {
+        const enabled = Boolean(viewerConfig.debugMockEnabled);
+        elements.mockPanel.hidden = !enabled;
+        elements.mockBadgeText.textContent = enabled ? "enabled" : "disabled";
+      }
+
+      elements.refreshAll.addEventListener("click", reloadAll);
+      elements.refreshSessions.addEventListener("click", loadSessions);
+      elements.reloadSessionsInline.addEventListener("click", loadSessions);
+      elements.pinToggle.addEventListener("click", togglePin);
+      elements.mockForm.addEventListener("submit", generateMock);
+      elements.mockReset.addEventListener("click", resetMock);
+
+      applyViewerConfig();
+      reloadAll();
+    </script>
+  </body>
+</html>

@@ -24,6 +24,7 @@ export interface AppConfig {
 
 export interface ObservabilityConfig {
   enabled?: boolean
+  debugMockEnabled?: boolean
   queueCapacity?: number
   batchSize?: number
   flushIntervalMs?: number
@@ -88,6 +89,7 @@ const defaultConfig: AppConfig = {
   },
   observability: {
     enabled: false,
+    debugMockEnabled: false,
     queueCapacity: 2048,
     batchSize: 100,
     flushIntervalMs: 1000,

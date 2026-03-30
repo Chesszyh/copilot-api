@@ -170,6 +170,8 @@ export function createObservabilityStorage(
       root_trace_id TEXT,
       user_id TEXT,
       client_type TEXT,
+      source TEXT NOT NULL DEFAULT 'live',
+      scenario TEXT,
       started_at INTEGER NOT NULL,
       ended_at INTEGER,
       status TEXT NOT NULL DEFAULT 'unknown',
@@ -186,6 +188,7 @@ export function createObservabilityStorage(
       method TEXT NOT NULL,
       path TEXT NOT NULL,
       model TEXT,
+      source TEXT NOT NULL DEFAULT 'live',
       stream INTEGER NOT NULL,
       request_started_at INTEGER NOT NULL,
       first_token_at INTEGER,
@@ -220,12 +223,34 @@ export function createObservabilityStorage(
     );
   `)
 
+  const ensureColumn = (
+    tableName: "sessions" | "request_events",
+    columnName: string,
+    columnDefinition: string,
+  ): void => {
+    const columns = db.query(`PRAGMA table_info(${tableName})`).all() as Array<{
+      name: string
+    }>
+    if (columns.some((column) => column.name === columnName)) return
+    db.exec(`ALTER TABLE ${tableName} ADD COLUMN ${columnDefinition}`)
+  }
+
+  ensureColumn("sessions", "source", "source TEXT NOT NULL DEFAULT 'live'")
+  ensureColumn("sessions", "scenario", "scenario TEXT")
+  ensureColumn(
+    "request_events",
+    "source",
+    "source TEXT NOT NULL DEFAULT 'live'",
+  )
+
   const insertOrUpdateSession = db.prepare(`
     INSERT INTO sessions (
       session_id,
       root_trace_id,
       user_id,
       client_type,
+      source,
+      scenario,
       started_at,
       ended_at,
       status,
@@ -237,6 +262,8 @@ export function createObservabilityStorage(
       $rootTraceId,
       $userId,
       $clientType,
+      $source,
+      $scenario,
       $startedAt,
       $endedAt,
       $status,
@@ -248,6 +275,8 @@ export function createObservabilityStorage(
       root_trace_id = excluded.root_trace_id,
       user_id = excluded.user_id,
       client_type = excluded.client_type,
+      source = excluded.source,
+      scenario = excluded.scenario,
       started_at = excluded.started_at,
       ended_at = COALESCE(excluded.ended_at, sessions.ended_at),
       status = excluded.status,
@@ -265,6 +294,7 @@ export function createObservabilityStorage(
       method,
       path,
       model,
+      source,
       stream,
       request_started_at,
       first_token_at,
@@ -290,6 +320,7 @@ export function createObservabilityStorage(
       $method,
       $path,
       $model,
+      $source,
       $stream,
       $requestStartedAt,
       $firstTokenAt,
@@ -315,6 +346,7 @@ export function createObservabilityStorage(
       method = excluded.method,
       path = excluded.path,
       model = excluded.model,
+      source = excluded.source,
       stream = excluded.stream,
       request_started_at = excluded.request_started_at,
       first_token_at = excluded.first_token_at,
@@ -367,6 +399,8 @@ export function createObservabilityStorage(
       root_trace_id AS rootTraceId,
       user_id AS userId,
       client_type AS clientType,
+      source,
+      scenario,
       started_at AS startedAt,
       ended_at AS endedAt,
       status,
@@ -386,6 +420,7 @@ export function createObservabilityStorage(
       method,
       path,
       model,
+      source,
       stream,
       request_started_at AS requestStartedAt,
       first_token_at AS firstTokenAt,
@@ -477,6 +512,18 @@ export function createObservabilityStorage(
     DELETE FROM raw_artifacts WHERE request_id = $requestId AND kind = $kind
   `)
 
+  const getMockSessionIdsStatement = db.prepare(`
+    SELECT session_id AS sessionId
+    FROM sessions
+    WHERE source = 'mock'
+  `)
+
+  const getMockRequestIdsStatement = db.prepare(`
+    SELECT request_id AS requestId, session_id AS sessionId
+    FROM request_events
+    WHERE source = 'mock'
+  `)
+
   const setSessionPinnedStatement = db.prepare(`
     UPDATE sessions
     SET pinned = 1,
@@ -514,6 +561,8 @@ export function createObservabilityStorage(
       s.root_trace_id AS rootTraceId,
       s.user_id AS userId,
       s.client_type AS clientType,
+      s.source,
+      s.scenario,
       s.started_at AS startedAt,
       s.ended_at AS endedAt,
       s.status,
@@ -537,6 +586,7 @@ export function createObservabilityStorage(
       method,
       path,
       model,
+      source,
       stream,
       request_started_at AS requestStartedAt,
       first_token_at AS firstTokenAt,
@@ -577,6 +627,8 @@ export function createObservabilityStorage(
         $rootTraceId: session.rootTraceId,
         $userId: session.userId,
         $clientType: session.clientType,
+        $source: session.source ?? "live",
+        $scenario: session.scenario ?? null,
         $startedAt: session.startedAt,
         $endedAt: session.endedAt,
         $status: session.status,
@@ -612,6 +664,7 @@ export function createObservabilityStorage(
       const updatedAt = options.updatedAt ?? createdAt
       const event: StoredRequestEvent = {
         ...input,
+        source: input.source ?? "live",
         rawReference: input.rawReference ?? null,
         createdAt,
         updatedAt,
@@ -625,6 +678,7 @@ export function createObservabilityStorage(
         $method: event.method,
         $path: event.path,
         $model: event.model ?? null,
+        $source: event.source ?? "live",
         $stream: event.stream ? 1 : 0,
         $requestStartedAt: event.requestStartedAt,
         $firstTokenAt: event.firstTokenAt ?? null,
@@ -804,6 +858,62 @@ export function createObservabilityStorage(
       }
 
       return true
+    },
+
+    resetMockData(): PurgeResult {
+      const result: PurgeResult = {
+        deletedSessions: 0,
+        deletedRequestEvents: 0,
+        deletedArtifacts: 0,
+      }
+
+      const mockRequestIds = getMockRequestIdsStatement.all() as Array<{
+        requestId: string
+        sessionId: string | null
+      }>
+      for (const request of mockRequestIds) {
+        deleteRequestEventStatement.run({
+          $requestId: request.requestId,
+        } as never)
+        result.deletedRequestEvents++
+      }
+
+      const mockSessionIds = getMockSessionIdsStatement.all() as Array<{
+        sessionId: string
+      }>
+      for (const session of mockSessionIds) {
+        const artifacts = listSessionArtifactsStatement.all({
+          $sessionId: session.sessionId,
+        }) as Array<RawArtifactRecord>
+        for (const artifact of artifacts) {
+          if (fs.existsSync(artifact.sourcePath)) {
+            fs.rmSync(artifact.sourcePath, { force: true })
+          }
+          if (
+            artifact.pinnedPath
+            && artifact.pinnedPath !== artifact.sourcePath
+            && fs.existsSync(artifact.pinnedPath)
+          ) {
+            fs.rmSync(artifact.pinnedPath, { force: true })
+          }
+          deleteRawArtifactStatement.run({
+            $requestId: artifact.requestId,
+            $kind: artifact.kind,
+          } as never)
+          result.deletedArtifacts++
+        }
+
+        deleteSessionStatement.run({
+          $sessionId: session.sessionId,
+        } as never)
+        result.deletedSessions++
+      }
+
+      return result
+    },
+
+    clearMockData(): PurgeResult {
+      return storage.resetMockData()
     },
 
     setSessionPinned(sessionId: string, pinned: boolean): boolean {

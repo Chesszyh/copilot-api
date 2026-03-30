@@ -132,7 +132,10 @@ export async function runServer(options: RunServerOptions): Promise<void> {
   }
 
   consola.box(
-    `🌐 Usage Viewer: ${serverUrl}/usage-viewer?endpoint=${serverUrl}/usage`,
+    [
+      `🌐 Usage Viewer: ${serverUrl}/usage-viewer?endpoint=${serverUrl}/usage`,
+      `📊 Observability Viewer: ${serverUrl}/observability-viewer`,
+    ].join("\n"),
   )
 
   const { server } = await import("./server")

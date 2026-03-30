@@ -50,6 +50,8 @@ export const normalizeSessionUpsert = (
   rootTraceId: input.rootTraceId ?? null,
   userId: input.userId ?? null,
   clientType: input.clientType ?? null,
+  source: input.source ?? "live",
+  scenario: input.scenario ?? null,
   startedAt: input.startedAt,
   endedAt: input.endedAt ?? null,
   status: input.status ?? "unknown",

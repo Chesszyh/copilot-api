@@ -120,3 +120,75 @@ test("pinning promotes raw bodies and protects them from ttl purge", async () =>
     await fs.rm(baseDir, { recursive: true, force: true })
   }
 })
+
+test("stores source and scenario, and resetMockData only removes mock records", async () => {
+  const baseDir = await createTempDir()
+  const storage = createObservabilityStorage({ baseDir })
+
+  try {
+    storage.upsertSession({
+      sessionId: "live-session",
+      startedAt: 1000,
+      status: "completed",
+      source: "live",
+    })
+    storage.upsertSession({
+      sessionId: "mock-session",
+      startedAt: 2000,
+      status: "failed",
+      source: "mock",
+      scenario: "error_case",
+    })
+
+    storage.saveRequestEvent({
+      requestId: "live-request",
+      sessionId: "live-session",
+      traceId: "trace-live",
+      routeType: "messages",
+      method: "POST",
+      path: "/v1/messages",
+      stream: false,
+      requestStartedAt: 1010,
+      statusCode: 200,
+      source: "live",
+    })
+    storage.saveRequestEvent({
+      requestId: "mock-request",
+      sessionId: "mock-session",
+      traceId: "trace-mock",
+      routeType: "responses",
+      method: "POST",
+      path: "/v1/responses",
+      stream: true,
+      requestStartedAt: 2010,
+      statusCode: 500,
+      errorType: "upstream_error",
+      source: "mock",
+    })
+
+    expect(storage.getSession("mock-session")).toMatchObject({
+      sessionId: "mock-session",
+      source: "mock",
+      scenario: "error_case",
+    })
+    expect(storage.getRequestEvent("mock-request")).toMatchObject({
+      requestId: "mock-request",
+      source: "mock",
+    })
+
+    const resetResult = storage.resetMockData()
+    expect(resetResult).toEqual({
+      deletedSessions: 1,
+      deletedRequestEvents: 1,
+      deletedArtifacts: 0,
+    })
+
+    expect(storage.getSession("mock-session")).toBeNull()
+    expect(storage.getRequestEvent("mock-request")).toBeNull()
+    expect(storage.getSession("live-session")).not.toBeNull()
+    expect(storage.getRequestEvent("live-request")).not.toBeNull()
+  } finally {
+    storage.close()
+    await fs.rm(baseDir, { recursive: true, force: true })
+  }
+})

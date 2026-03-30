@@ -70,6 +70,25 @@ function createUnauthorizedResponse(c: Context): Response {
   )
 }
 
+function isUnauthenticatedPath(
+  requestPath: string,
+  allowUnauthenticatedPaths: Array<string>,
+): boolean {
+  return allowUnauthenticatedPaths.some((allowedPath) => {
+    const trimmedPath = allowedPath.trim()
+    if (!trimmedPath) {
+      return false
+    }
+
+    if (trimmedPath.endsWith("*")) {
+      const prefix = trimmedPath.slice(0, -1)
+      return requestPath.startsWith(prefix)
+    }
+
+    return requestPath === trimmedPath
+  })
+}
+
 export function createAuthMiddleware(
   options: AuthMiddlewareOptions = {},
 ): MiddlewareHandler {
@@ -82,7 +101,7 @@ export function createAuthMiddleware(
       return next()
     }
 
-    if (allowUnauthenticatedPaths.includes(c.req.path)) {
+    if (isUnauthenticatedPath(c.req.path, allowUnauthenticatedPaths)) {
       return next()
     }
 

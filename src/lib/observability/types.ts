@@ -14,6 +14,8 @@ export interface SessionRecord {
   rootTraceId?: string | null
   userId?: string | null
   clientType?: string | null
+  source?: "live" | "mock"
+  scenario?: string | null
   startedAt: number
   endedAt?: number | null
   status?: "completed" | "abandoned" | "failed" | "interrupted" | "unknown"
@@ -28,6 +30,7 @@ export interface RequestEventRecord {
   method: string
   path: string
   model?: string | null
+  source?: "live" | "mock"
   stream: boolean
   requestStartedAt: number
   firstTokenAt?: number | null
