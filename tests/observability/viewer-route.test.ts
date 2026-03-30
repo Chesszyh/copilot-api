@@ -23,6 +23,8 @@ describe("observability viewer route", () => {
     expect(html).toContain("/observability/summary")
     expect(html).toContain("/observability/sessions")
     expect(html).toContain("/observability/pin")
+    expect(html).toContain("下载 JSON")
+    expect(html).toContain("文件路径")
   })
 
   test("redirects the trailing slash path to the canonical path", async () => {
