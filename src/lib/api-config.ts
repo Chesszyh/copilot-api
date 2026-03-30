@@ -2,6 +2,8 @@ import { randomUUID } from "node:crypto"
 
 import type { State } from "./state"
 
+import { requestContext } from "./request-context"
+
 export const isOpencodeOauthApp = (): boolean => {
   return process.env.COPILOT_API_OAUTH_APP?.trim() === "opencode"
 }
@@ -30,7 +32,7 @@ export const getGitHubApiBaseUrl = (): string => {
   return resolvedDomain ? `https://api.${resolvedDomain}` : GITHUB_API_BASE_URL
 }
 
-export const getOpencodeOauthHeaders = (): Record<string, string> => {
+const getOpencodeOauthHeaders = (): Record<string, string> => {
   return {
     Accept: "application/json",
     "Content-Type": "application/json",
@@ -133,6 +135,11 @@ export const copilotHeaders = (
       Authorization: `Bearer ${state.copilotToken}`,
       ...getOpencodeOauthHeaders(),
       "Openai-Intent": "conversation-edits",
+    }
+
+    const context = requestContext.getStore()
+    if (context?.userAgent.startsWith("opencode/")) {
+      headers["User-Agent"] = context.userAgent
     }
 
     if (vision) headers["Copilot-Vision-Request"] = "true"
