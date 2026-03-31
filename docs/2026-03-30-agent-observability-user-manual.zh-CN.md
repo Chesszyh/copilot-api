@@ -52,6 +52,7 @@
 
 - `GET /observability/summary`
 - `GET /observability/analysis`
+- `POST /observability/analysis/backfill`
 - `GET /observability/sessions`
 - `GET /observability/sessions/:sessionId`
 - `POST /observability/pin/:sessionId`
@@ -166,7 +167,24 @@ curl http://localhost:4141/observability/analysis
 - `sessionsWithFacts`
 - `factsByType[]`（`factType`、`count`、`avgScore`）
 
-### 4.4 `GET /observability/sessions/:sessionId`
+### 4.4 `POST /observability/analysis/backfill`
+
+作用：对历史 session 做一次分析回填，重新生成并写入：
+
+- `analysis_facts`
+- `tool_events`
+
+示例：
+
+```bash
+curl -X POST http://localhost:4141/observability/analysis/backfill
+```
+
+可选参数（JSON）：
+
+- `batchSize`（每批处理 session 数，默认 200）
+
+### 4.5 `GET /observability/sessions/:sessionId`
 
 作用：读取单个 session 详情。
 
@@ -185,7 +203,7 @@ curl http://localhost:4141/observability/sessions/<session_id>
 - 每个 request 的 model、route、timing、token、摘要、raw reference 等字段
 - viewer 中可通过 request 跳转器快速定位到单条请求
 
-### 4.5 `POST /observability/pin/:sessionId`
+### 4.6 `POST /observability/pin/:sessionId`
 
 作用：将一个 session 标记为 pinned。
 
@@ -200,7 +218,7 @@ curl -X POST http://localhost:4141/observability/pin/<session_id>
 - 该 session 将被标记为长期保留
 - 其对应的 raw 正文文件不再参与 3 天 TTL 清理
 
-### 4.6 `DELETE /observability/pin/:sessionId`
+### 4.7 `DELETE /observability/pin/:sessionId`
 
 作用：取消 pin。
 

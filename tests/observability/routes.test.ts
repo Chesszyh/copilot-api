@@ -36,6 +36,13 @@ describe("observability routes", () => {
             { factType: "retry_after_answer", count: 2, avgScore: 0.7 },
           ],
         }),
+        backfillAnalysis: () => ({
+          scannedSessions: 0,
+          processedSessions: 0,
+          skippedSessions: 0,
+          regeneratedFacts: 0,
+          regeneratedToolEvents: 0,
+        }),
       }),
     )
 
@@ -47,6 +54,48 @@ describe("observability routes", () => {
       factsByType: [
         { factType: "retry_after_answer", count: 2, avgScore: 0.7 },
       ],
+    })
+  })
+
+  test("analysis route supports backfill endpoint", async () => {
+    const app = new Hono()
+    app.route(
+      "/observability/analysis",
+      createObservabilityAnalysisRoute({
+        getAnalysisOverview: () => ({
+          totalFacts: 0,
+          sessionsWithFacts: 0,
+          factsByType: [],
+        }),
+        backfillAnalysis: ({ batchSize } = {}) => ({
+          scannedSessions: 2,
+          processedSessions: 2,
+          skippedSessions: 0,
+          regeneratedFacts: 3,
+          regeneratedToolEvents: 1,
+          batchSize: batchSize ?? null,
+        }),
+      }),
+    )
+
+    const response = await app.request("/observability/analysis/backfill", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        batchSize: 128,
+      }),
+    })
+
+    expect(response.status).toBe(200)
+    expect(await response.json()).toEqual({
+      scannedSessions: 2,
+      processedSessions: 2,
+      skippedSessions: 0,
+      regeneratedFacts: 3,
+      regeneratedToolEvents: 1,
+      batchSize: 128,
     })
   })
 

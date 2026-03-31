@@ -327,6 +327,91 @@ const applyToolFlags = (
   }))
 }
 
+const rebuildSessionAnalysisArtifacts = (
+  targetStorage: ReturnType<typeof createObservabilityStorage>,
+  sessionId: string,
+): {
+  facts: Array<AnalysisFactRecord>
+  toolEvents: Array<ToolEventRecord>
+} | null => {
+  const sessionDetail = targetStorage.getSessionDetail(sessionId)
+  if (!sessionDetail) {
+    return null
+  }
+
+  const facts = deriveAnalysisFactsForSession(
+    sessionDetail.session,
+    sessionDetail.requests,
+  )
+  const toolEvents = applyToolFlags(
+    deriveToolEventsForSession(sessionDetail.session, sessionDetail.requests),
+    facts,
+  )
+
+  targetStorage.replaceSessionAnalysisFacts(sessionId, facts)
+  targetStorage.replaceSessionToolEvents(sessionId, toolEvents)
+
+  return { facts, toolEvents }
+}
+
+export interface ObservabilityAnalysisBackfillResult {
+  scannedSessions: number
+  processedSessions: number
+  skippedSessions: number
+  regeneratedFacts: number
+  regeneratedToolEvents: number
+}
+
+export const backfillObservabilityAnalysis = (
+  targetStorage: ReturnType<
+    typeof createObservabilityStorage
+  > = ensureStorage(),
+  options: {
+    batchSize?: number
+  } = {},
+): ObservabilityAnalysisBackfillResult => {
+  const result: ObservabilityAnalysisBackfillResult = {
+    scannedSessions: 0,
+    processedSessions: 0,
+    skippedSessions: 0,
+    regeneratedFacts: 0,
+    regeneratedToolEvents: 0,
+  }
+
+  const batchSize = Math.max(1, options.batchSize ?? 200)
+  let offset = 0
+
+  while (true) {
+    const sessions = targetStorage.listSessions({
+      limit: batchSize,
+      offset,
+    })
+    if (sessions.length === 0) {
+      break
+    }
+
+    result.scannedSessions += sessions.length
+    for (const session of sessions) {
+      const rebuilt = rebuildSessionAnalysisArtifacts(
+        targetStorage,
+        session.sessionId,
+      )
+      if (!rebuilt) {
+        result.skippedSessions += 1
+        continue
+      }
+
+      result.processedSessions += 1
+      result.regeneratedFacts += rebuilt.facts.length
+      result.regeneratedToolEvents += rebuilt.toolEvents.length
+    }
+
+    offset += sessions.length
+  }
+
+  return result
+}
+
 export const deriveToolEventsForSession = (
   session: SessionRecord,
   requests: Array<RequestEventRecord>,
@@ -591,24 +676,7 @@ export const persistObservabilityEnvelope = (
     rawReference,
   })
 
-  const sessionDetail = currentStorage.getSessionDetail(sessionId)
-  if (sessionDetail) {
-    const derivedFacts = deriveAnalysisFactsForSession(
-      sessionDetail.session,
-      sessionDetail.requests,
-    )
-    currentStorage.replaceSessionAnalysisFacts(sessionId, derivedFacts)
-    currentStorage.replaceSessionToolEvents(
-      sessionId,
-      applyToolFlags(
-        deriveToolEventsForSession(
-          sessionDetail.session,
-          sessionDetail.requests,
-        ),
-        derivedFacts,
-      ),
-    )
-  }
+  rebuildSessionAnalysisArtifacts(currentStorage, sessionId)
 
   currentStorage.purgeExpired({
     ttlMs: options.rawRetentionDays * 24 * 60 * 60 * 1000,

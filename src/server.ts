@@ -39,6 +39,7 @@ server.use(
       "/observability-viewer/",
       "/observability/summary",
       "/observability/analysis",
+      "/observability/analysis/backfill",
       "/observability/sessions",
       "/observability/sessions/*",
       "/observability/pin/*",

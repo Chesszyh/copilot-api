@@ -91,6 +91,7 @@ This project also ships with a local observability viewer for inspecting proxied
 - Local APIs used by the viewer:
   - `GET /observability/summary`
   - `GET /observability/analysis`
+  - `POST /observability/analysis/backfill`
   - `GET /observability/sessions`
   - `GET /observability/sessions/:sessionId`
   - `POST/DELETE /observability/pin/:sessionId`

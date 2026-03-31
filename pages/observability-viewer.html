@@ -835,6 +835,9 @@
           <button class="button button--primary" id="refresh-all" type="button">
             刷新概览
           </button>
+          <button class="button" id="backfill-analysis" type="button">
+            回填历史分析
+          </button>
           <button class="button" id="refresh-sessions" type="button">
             刷新会话列表
           </button>
@@ -1110,6 +1113,7 @@
         detailHelp: document.getElementById("detail-help"),
         pinToggle: document.getElementById("pin-toggle"),
         refreshAll: document.getElementById("refresh-all"),
+        backfillAnalysis: document.getElementById("backfill-analysis"),
         refreshSessions: document.getElementById("refresh-sessions"),
         reloadSessionsInline: document.getElementById("reload-sessions-inline"),
         mockStatus: document.getElementById("mock-status"),
@@ -1750,6 +1754,26 @@
         }
       }
 
+      async function runAnalysisBackfill() {
+        setStatus("正在回填历史 session 的 analysis/tool 数据...");
+        try {
+          const result = await fetchJson("/observability/analysis/backfill", {
+            method: "POST",
+            body: JSON.stringify({}),
+          });
+          await reloadAll();
+          if (state.selectedSessionId) {
+            await loadSessionDetail(state.selectedSessionId);
+          }
+          setStatus(
+            `回填完成: sessions=${formatMaybeNumber(result.processedSessions)} facts=${formatMaybeNumber(result.regeneratedFacts)} toolEvents=${formatMaybeNumber(result.regeneratedToolEvents)}`,
+            "success",
+          );
+        } catch (error) {
+          setStatus(`回填失败: ${error.message}`, "error");
+        }
+      }
+
       async function togglePin() {
         if (!state.selectedSessionId || !state.selectedSession) {
           return;
@@ -1839,6 +1863,7 @@
       }
 
       elements.refreshAll.addEventListener("click", reloadAll);
+      elements.backfillAnalysis.addEventListener("click", runAnalysisBackfill);
       elements.refreshSessions.addEventListener("click", loadSessions);
       elements.reloadSessionsInline.addEventListener("click", loadSessions);
       elements.sessionSearch.addEventListener("input", applySessionFilters);

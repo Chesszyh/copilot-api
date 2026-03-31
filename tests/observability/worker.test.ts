@@ -11,6 +11,7 @@ import type {
 
 import { createObservabilityStorage } from "~/lib/observability/storage"
 import {
+  backfillObservabilityAnalysis,
   deriveAnalysisFactsForSession,
   deriveToolEventsForSession,
   persistObservabilityEnvelope,
@@ -375,6 +376,83 @@ test("persistObservabilityEnvelope stores derived tool events with fact flags", 
     })
     expect(typeof toolEvent?.createdAt).toBe("number")
     expect(typeof toolEvent?.updatedAt).toBe("number")
+  } finally {
+    storage.close()
+    await fs.rm(baseDir, { recursive: true, force: true })
+  }
+})
+
+test("backfillObservabilityAnalysis rebuilds facts for historical sessions", async () => {
+  const baseDir = await createTempDir()
+  const storage = createObservabilityStorage({ baseDir })
+
+  try {
+    storage.upsertSession({
+      sessionId: "session-backfill",
+      startedAt: 1000,
+      status: "completed",
+      source: "live",
+    })
+
+    storage.saveRequestEvent({
+      requestId: "session-backfill-req-1",
+      sessionId: "session-backfill",
+      traceId: "trace-b1",
+      routeType: "responses",
+      method: "POST",
+      path: "/v1/responses",
+      model: "gpt-5.4",
+      source: "live",
+      stream: true,
+      requestStartedAt: 1000,
+      requestFinishedAt: 1300,
+      statusCode: 200,
+      sanitizedResponse: JSON.stringify({ summary: "old answer" }),
+    })
+
+    storage.saveRequestEvent({
+      requestId: "session-backfill-req-2",
+      sessionId: "session-backfill",
+      traceId: "trace-b2",
+      routeType: "responses",
+      method: "POST",
+      path: "/v1/responses",
+      model: "gpt-5.4",
+      source: "live",
+      stream: true,
+      requestStartedAt: 1800,
+      requestFinishedAt: 2200,
+      statusCode: 200,
+      sanitizedPayload: JSON.stringify({
+        message: "wrong, try again",
+        tool_calls: [
+          {
+            id: "call_backfill_1",
+            type: "function",
+            function: {
+              name: "search_code",
+              arguments: '{"query":"backfill"}',
+            },
+          },
+        ],
+      }),
+    })
+
+    expect(storage.listAnalysisFactsBySession("session-backfill")).toEqual([])
+    expect(storage.listToolEventsBySession("session-backfill")).toEqual([])
+
+    const result = backfillObservabilityAnalysis(storage)
+    expect(result).toEqual({
+      scannedSessions: 1,
+      processedSessions: 1,
+      skippedSessions: 0,
+      regeneratedFacts: 2,
+      regeneratedToolEvents: 1,
+    })
+
+    const detail = storage.getSessionDetail("session-backfill")
+    expect(detail?.analysisFacts).toHaveLength(2)
+    expect(detail?.toolEvents).toHaveLength(1)
   } finally {
     storage.close()
     await fs.rm(baseDir, { recursive: true, force: true })
