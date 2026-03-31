@@ -70,6 +70,39 @@ Compared with routing everything through plain Chat Completions compatibility, t
 - **Accurate Claude Token Counting**: Optionally forward `/v1/messages/count_tokens` requests for Claude models to Anthropic's free token counting endpoint for exact counts instead of GPT tokenizer estimation.
 - **GPT Context Management**: Configurable context compaction for long-running GPT conversations via `responsesApiContextManagementModels`, reducing unnecessary premium requests when approaching token limits. See [Configuration](#configuration-configjson) for details.
 
+## Observability Viewer
+
+This project also ships with a local observability viewer for inspecting proxied sessions and requests without sending anything to GitHub Copilot.
+
+- Enable it in runtime config:
+  ```json
+  {
+    "observability": {
+      "enabled": true,
+      "debugMockEnabled": false
+    }
+  }
+  ```
+- Runtime config path:
+  - `~/.local/share/copilot-api/config.json`
+  - or `$COPILOT_API_HOME/config.json` when `COPILOT_API_HOME` is set
+- Viewer URL:
+  - `http://localhost:4141/observability-viewer`
+- Local APIs used by the viewer:
+  - `GET /observability/summary`
+  - `GET /observability/sessions`
+  - `GET /observability/sessions/:sessionId`
+  - `POST/DELETE /observability/pin/:sessionId`
+- Debug-only mock endpoints, enabled only when `debugMockEnabled` is `true`:
+  - `POST /observability/mock/generate`
+  - `POST /observability/mock/reset`
+- Default local storage paths:
+  - `~/.local/share/copilot-api/observability/events.db`
+  - `~/.local/share/copilot-api/observability/raw/`
+  - `~/.local/share/copilot-api/observability/pinned/`
+
+The viewer currently supports summary cards, session search, status/source filtering, request jump navigation, pin/unpin, mock generation, and readable JSON source panels with download/copy actions.
+
 ## Better Agent Semantics
 
 ### Native Anthropic Messages API when available

@@ -38,8 +38,11 @@
 
 - summary 概览
 - session 列表
+- session 搜索
+- 状态与来源过滤
 - session 详情
 - request 时间线
+- request 快速跳转
 - pin / unpin
 - debug mock 入口
 - JSON 源码视图
@@ -161,6 +164,7 @@ curl http://localhost:4141/observability/sessions/<session_id>
 - session 基本信息
 - 该 session 下的 request 列表
 - 每个 request 的 model、route、timing、token、摘要、raw reference 等字段
+- viewer 中可通过 request 跳转器快速定位到单条请求
 
 ### 4.4 `POST /observability/pin/:sessionId`
 
@@ -254,6 +258,13 @@ COPILOT_API_HOME=/tmp/copilot-api bun run start
 - `sanitizedPayload`
 - `sanitizedResponse`
 - `rawReference`
+
+viewer 当前还提供以下只读辅助能力：
+
+- 按 `sessionId / scenario / clientType` 搜索 session
+- 按 `status` 过滤 session
+- 按 `source` 过滤 `live / mock`
+- 在 session 详情中通过 request 跳转器快速定位单条请求
 
 ## 7. 默认留存策略
 
@@ -416,6 +427,12 @@ find ~/.local/share/copilot-api/observability -maxdepth 3 -type f | sort
 - `/usage-viewer`
 
 `/usage-viewer` 仍然只显示 GitHub Copilot usage/quota；新的本地观测面板在 `/observability-viewer`。
+
+新面板当前还支持：
+
+- session 搜索
+- status/source 过滤
+- request 快速跳转
 
 ### 11.2 为什么 `summary` 是空的？
 

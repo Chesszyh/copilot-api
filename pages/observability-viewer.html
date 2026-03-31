@@ -310,6 +310,15 @@
         margin-bottom: 14px;
       }
 
+      .toolbar .control {
+        min-width: 140px;
+        flex: 1 1 160px;
+      }
+
+      .toolbar .control--search {
+        flex: 2 1 220px;
+      }
+
       .session-list {
         display: grid;
         gap: 10px;
@@ -810,6 +819,33 @@
               <span class="badge" id="session-count-badge">0</span>
             </div>
             <div class="toolbar">
+              <div class="control control--search">
+                <label for="session-search">搜索 Session</label>
+                <input
+                  id="session-search"
+                  type="search"
+                  placeholder="按 sessionId / scenario / clientType 搜索"
+                />
+              </div>
+              <div class="control">
+                <label for="session-status-filter">状态过滤</label>
+                <select id="session-status-filter">
+                  <option value="">全部状态</option>
+                  <option value="completed">completed</option>
+                  <option value="failed">failed</option>
+                  <option value="abandoned">abandoned</option>
+                  <option value="interrupted">interrupted</option>
+                  <option value="unknown">unknown</option>
+                </select>
+              </div>
+              <div class="control">
+                <label for="session-source-filter">来源过滤</label>
+                <select id="session-source-filter">
+                  <option value="">全部来源</option>
+                  <option value="live">live</option>
+                  <option value="mock">mock</option>
+                </select>
+              </div>
               <button class="button" id="reload-sessions-inline" type="button">
                 重新加载
               </button>
@@ -858,6 +894,12 @@
               <div class="field">
                 <span class="field__label">Updated At</span>
                 <span class="field__value" id="detail-updated-at"></span>
+              </div>
+              <div class="field">
+                <label class="field__label" for="request-jump-list">Request Jump</label>
+                <select id="request-jump-list">
+                  <option value="">选择请求后快速定位</option>
+                </select>
               </div>
             </div>
 
@@ -935,6 +977,11 @@
         loading: false,
         detailLoading: false,
         actionPayloads: new Map(),
+        filters: {
+          search: "",
+          status: "",
+          source: "",
+        },
       };
 
       const elements = {
@@ -947,6 +994,9 @@
         summaryPinnedCount: document.getElementById("summary-pinned-count"),
         sessionCountBadge: document.getElementById("session-count-badge"),
         sessionList: document.getElementById("session-list"),
+        sessionSearch: document.getElementById("session-search"),
+        sessionStatusFilter: document.getElementById("session-status-filter"),
+        sessionSourceFilter: document.getElementById("session-source-filter"),
         detailEmpty: document.getElementById("detail-empty"),
         detailContent: document.getElementById("detail-content"),
         detailSessionId: document.getElementById("detail-session-id"),
@@ -954,6 +1004,7 @@
         detailClientType: document.getElementById("detail-client-type"),
         detailSourceScenario: document.getElementById("detail-source-scenario"),
         detailUpdatedAt: document.getElementById("detail-updated-at"),
+        requestJumpList: document.getElementById("request-jump-list"),
         requestTimeline: document.getElementById("request-timeline"),
         detailHelp: document.getElementById("detail-help"),
         pinToggle: document.getElementById("pin-toggle"),
@@ -1287,20 +1338,57 @@
         elements.summaryPinnedCount.textContent = formatMaybeNumber(summary?.pinnedSessionCount);
       }
 
+      function getFilteredSessions() {
+        return state.sessions.filter((session) => {
+          const searchText = state.filters.search.trim().toLowerCase();
+          const searchable = [
+            session.sessionId,
+            session.scenario,
+            session.clientType,
+            session.source,
+            session.status,
+          ]
+            .filter(Boolean)
+            .join(" ")
+            .toLowerCase();
+
+          if (searchText && !searchable.includes(searchText)) {
+            return false;
+          }
+
+          if (state.filters.status && session.status !== state.filters.status) {
+            return false;
+          }
+
+          if (state.filters.source && session.source !== state.filters.source) {
+            return false;
+          }
+
+          return true;
+        });
+      }
+
       function renderSessionList() {
         elements.sessionList.innerHTML = "";
-        elements.sessionCountBadge.textContent = String(state.sessions.length);
+        const filteredSessions = getFilteredSessions();
+        elements.sessionCountBadge.textContent =
+          filteredSessions.length === state.sessions.length ?
+            String(filteredSessions.length)
+          : `${filteredSessions.length} / ${state.sessions.length}`;
 
-        if (state.sessions.length === 0) {
+        if (filteredSessions.length === 0) {
           const empty = document.createElement("div");
           empty.className = "detail-empty";
           empty.style.minHeight = "180px";
-          empty.innerHTML = "<div><h3 style='margin-bottom:8px'>暂无 session</h3><p>先采集一些请求，或者在 debug 模式下生成 mock 数据。</p></div>";
+          empty.innerHTML =
+            state.sessions.length === 0 ?
+              "<div><h3 style='margin-bottom:8px'>暂无 session</h3><p>先采集一些请求，或者在 debug 模式下生成 mock 数据。</p></div>"
+            : "<div><h3 style='margin-bottom:8px'>没有匹配结果</h3><p>调整搜索词或过滤条件后再试。</p></div>";
           elements.sessionList.appendChild(empty);
           return;
         }
 
-        for (const session of state.sessions) {
+        for (const session of filteredSessions) {
           const button = document.createElement("button");
           button.type = "button";
           button.className = "session-item";
@@ -1338,6 +1426,7 @@
         elements.detailContent.hidden = true;
         elements.pinToggle.disabled = true;
         elements.pinToggle.textContent = "Pin";
+        elements.requestJumpList.innerHTML = '<option value="">选择请求后快速定位</option>';
       }
 
       function renderDetail(detail) {
@@ -1367,6 +1456,7 @@
         elements.detailHelp.textContent = `${requests.length} 条请求记录，最后更新时间 ${formatDateTime(session.updatedAt)}。`;
 
         elements.requestTimeline.innerHTML = "";
+        elements.requestJumpList.innerHTML = '<option value="">选择请求后快速定位</option>';
         state.actionPayloads.clear();
         if (requests.length === 0) {
           const empty = document.createElement("div");
@@ -1379,6 +1469,7 @@
         for (const request of requests) {
           const item = document.createElement("article");
           item.className = "timeline-item";
+          item.id = `request-${request.requestId}`;
           const statusClass =
             request.statusCode && request.statusCode >= 400 ? "pill--danger" : "pill--success";
           item.innerHTML = `
@@ -1419,6 +1510,11 @@
             </div>
           `;
           elements.requestTimeline.appendChild(item);
+
+          const option = document.createElement("option");
+          option.value = item.id;
+          option.textContent = `${request.requestId} · ${request.routeType} · ${request.model ?? "—"}`;
+          elements.requestJumpList.appendChild(option);
         }
       }
 
@@ -1433,9 +1529,11 @@
         state.sessions = Array.isArray(sessions) ? sessions : [];
         renderSessionList();
 
+        const filteredSessions = getFilteredSessions();
+
         if (!state.selectedSessionId || !state.sessions.some((session) => session.sessionId === state.selectedSessionId)) {
-          if (state.sessions.length > 0) {
-            await selectSession(state.sessions[0].sessionId, { skipRenderList: true });
+          if (filteredSessions.length > 0) {
+            await selectSession(filteredSessions[0].sessionId, { skipRenderList: true });
           } else {
             state.selectedSessionId = null;
             state.selectedSession = null;
@@ -1543,9 +1641,39 @@
         elements.mockBadgeText.textContent = enabled ? "enabled" : "disabled";
       }
 
+      function applySessionFilters() {
+        state.filters.search = elements.sessionSearch.value;
+        state.filters.status = elements.sessionStatusFilter.value;
+        state.filters.source = elements.sessionSourceFilter.value;
+        renderSessionList();
+      }
+
+      function jumpToRequest(event) {
+        const targetId = event.target.value;
+        if (!targetId) {
+          return;
+        }
+
+        const target = document.getElementById(targetId);
+        if (!target) {
+          setStatus(`未找到 ${targetId} 对应的请求。`, "error");
+          return;
+        }
+
+        target.scrollIntoView({
+          behavior: "smooth",
+          block: "start",
+        });
+        setStatus(`已定位到 ${targetId.replace("request-", "")}。`, "success");
+      }
+
       elements.refreshAll.addEventListener("click", reloadAll);
       elements.refreshSessions.addEventListener("click", loadSessions);
       elements.reloadSessionsInline.addEventListener("click", loadSessions);
+      elements.sessionSearch.addEventListener("input", applySessionFilters);
+      elements.sessionStatusFilter.addEventListener("change", applySessionFilters);
+      elements.sessionSourceFilter.addEventListener("change", applySessionFilters);
+      elements.requestJumpList.addEventListener("change", jumpToRequest);
       elements.pinToggle.addEventListener("click", togglePin);
       elements.mockForm.addEventListener("submit", generateMock);
       elements.mockReset.addEventListener("click", resetMock);
