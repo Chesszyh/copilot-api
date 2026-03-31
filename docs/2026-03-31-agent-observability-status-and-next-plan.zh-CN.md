@@ -32,8 +32,25 @@
 - mock 数据生成与独立清理
 - viewer JSON 下载、复制、文件路径展示
 - viewer 默认 JSON 源码视图
+- viewer session 搜索、状态/来源过滤、request 快速跳转
+- `analysis_fact` 落库与读取
+- 4 个规则型质量信号：
+  - `retry_after_answer`
+  - `user_correction_signal`
+  - `redundant_tool_signal`
+  - `high_reasoning_low_outcome_signal`
+- `chat.completions` 路由 observability 接入
+- `docs/observability-benchmarks.md`
 
-### 2.2 已完成但文档此前滞后
+### 2.2 已合并提交（主分支 `all`）
+
+本轮并行开发结果已合并到主分支，关键提交如下：
+
+- `05674aa` `feat: add chat completions observability coverage`
+- `1bfccc6` `feat: add observability analysis facts`
+- `5fcd41f` `docs: refresh observability viewer guidance`
+
+### 2.3 已完成但文档此前滞后
 
 此前用户手册仍把系统描述为“只有 API，没有独立页面”，该描述现在已经过时。当前状态应以以下能力为准：
 
@@ -41,7 +58,7 @@
 - 已存在 mock 调试入口
 - 已支持较完善的 JSON 阅读体验
 
-### 2.3 部分完成
+### 2.4 部分完成
 
 以下部分已经具备基础，但尚未达到设计文档中的分析目标：
 
@@ -54,54 +71,37 @@
 
 ## 3. 尚未完成的 TODO
 
-以下 TODO 仍然与原始设计和 MVP 计划一致，且优先级较高。
+以下 TODO 是合并 Agent A/B/C 后仍然存在的项。
 
-### 3.1 规则型质量信号
-
-尚未落地：
-
-- `retry_after_answer`
-- `user_correction_signal`
-- `redundant_tool_signal`
-- `high_reasoning_low_outcome_signal`
-
-当前系统更像“观测平台”，还不是“质量诊断平台”。
-
-### 3.2 `analysis_fact`
-
-设计文档中已经定义了 `analysis_fact` 这一层派生事实，但当前实现尚未形成明确的派生表、统一计算入口和对外读取视图。
-
-### 3.3 `tool_event`
+### 3.1 `tool_event`
 
 设计文档中把 `tool_event` 列为核心实体之一，但当前实现还没有独立的 `tool_event` 存储与 API，因此 agent 工具路径分析仍不完整。
 
-### 3.4 `chat-completions` observability 接入确认
+### 3.2 benchmark 实测结果归档
 
-MVP 计划要求三条主要代理路由都接入 capture：
+`docs/observability-benchmarks.md` 已补齐方法和模板，但还缺真实环境的 off/on 压测结果表。
 
-- `messages`
-- `responses`
-- `chat.completions`
+待补数据：
 
-目前 `messages` 与 `responses` 是明确完成的，`chat.completions` 需要再做一次实现状态确认；若未完全接入，应补齐。
+- p50/p95/p99
+- RPS
+- RSS
+- queue backlog 峰值
+- dropped events
 
-### 3.5 benchmark 文档与性能验收
+### 3.3 质量信号读视图增强
 
-以下尚未完成：
+`analysis_fact` 已进入 session detail，但还没有独立聚合视图（例如按信号类型统计、按时间窗口统计）。
 
-- `docs/observability-benchmarks.md`
-- 正式记录 observability 开关前后的性能对比
-- dropped events / queue backlog / RSS / p50/p95/p99 结果归档
+### 3.4 `.claude/` 对 lint 的影响（工程收尾）
 
-### 3.6 README 更新
+当前主工作树存在未跟踪目录 `.claude/`，会导致 `bun run lint` 扫到额外文件并失败。该问题不影响已合并的 observability 代码，但会影响主分支日常验证体验。
 
-项目根 README 尚未同步 observability 的以下内容：
+建议在下一轮收尾中明确策略：
 
-- 启用方式
-- viewer 地址
-- mock 调试方式
-- 数据目录
-- pin / raw retention 策略
+- 忽略 `.claude/`
+- 或迁出仓库目录
+- 或纳入统一规范并通过 lint
 
 ## 4. 不属于当前 TODO 的事项
 
@@ -115,41 +115,27 @@ MVP 计划要求三条主要代理路由都接入 capture：
 
 ## 5. 下一阶段建议目标
 
-下一阶段建议把重点放在“把已有观测平台补成真正的分析系统”，而不是继续打磨表层页面。
+下一阶段建议把重点放在“分析能力补强 + 压测结果落地 + 工程收尾”。
 
 建议目标：
 
-1. 落地最小规则型质量信号
-2. 明确 `analysis_fact` 数据流
-3. 确认并补齐 `chat.completions` 接入
-4. 补 benchmark 文档与压测结果
-5. 更新 README
+1. 增加 `tool_event` 存储与读取
+2. 为 `analysis_fact` 增加聚合读视图
+3. 填充 benchmark 实测结果
+4. 处理 `.claude/` 的 lint 影响
 
-## 6. 支持并行开发的任务拆分
+## 6. 本轮并行执行结果
 
-下一阶段建议收缩到 3 个并行 agent。这样仍能并行推进，但共享文件和集成成本明显低于 4 路拆分。
+本轮按 3 个 agent 拆分执行，且均已完成并合并。
 
 ### Agent A: 质量信号与派生事实核心
 
-目标：
+完成项：
 
-- 实现最小规则型质量信号
-- 设计并落地 `analysis_fact`
-- 为后续 `tool_event` 打基础
-
-主文件 ownership：
-
-- `src/lib/observability/worker.ts`
-- `src/lib/observability/storage.ts`
-- `src/lib/observability/types.ts`
-- `tests/observability/storage.test.ts`
-- `tests/observability/routes.test.ts`
-
-交付结果：
-
-- 最少 3 到 4 个规则型质量信号
-- `analysis_fact` 的写入、查询与最小读取视图
-- 共享 schema 的最终集成权
+- 4 个规则型质量信号
+- `analysis_fact` 存储与读取
+- `session detail` 中暴露 `analysisFacts`
+- 新增 `tests/observability/worker.test.ts`
 
 详细开发文档：
 
@@ -157,24 +143,11 @@ MVP 计划要求三条主要代理路由都接入 capture：
 
 ### Agent B: 路由覆盖、链路回归与性能基准
 
-目标：
+完成项：
 
-- 确认并补齐 `chat.completions` observability 接入
-- 做三条主链路的观测回归
-- 输出性能基准方法与结果文档
-
-主文件 ownership：
-
-- `src/routes/chat-completions/handler.ts`
-- `src/lib/observability/capture.ts`
-- `tests/create-chat-completions.test.ts`
-- `docs/observability-benchmarks.md`
-
-交付结果：
-
-- `messages` / `responses` / `chat.completions` 的 observability 接入状态一致
-- benchmark 文档与基础结果表
-- 不引入主链明显性能回退
+- `chat.completions` 接入 observability capture
+- 新增 `tests/observability/chat-completions-route.test.ts`
+- 新增 `docs/observability-benchmarks.md`
 
 详细开发文档：
 
@@ -182,79 +155,33 @@ MVP 计划要求三条主要代理路由都接入 capture：
 
 ### Agent C: 文档同步与 viewer 轻量增强
 
-目标：
+完成项：
 
-- 同步 README 与用户手册
-- 为当前分析能力补齐使用说明
-- 只做不影响后端协议的 viewer 轻量增强
-
-主文件 ownership：
-
-- `README.md`
-- `docs/2026-03-30-agent-observability-user-manual.zh-CN.md`
-- `pages/observability-viewer.html`
-- `tests/observability/viewer-route.test.ts`
-
-可选内容：
-
-- session 筛选
-- 状态过滤
-- 更好的 request 导航
-- 不改后端 schema 的可读性增强
-
-约束：
-
-- 不得引入前端构建系统
-- 不得改动 Agent A 正在定义的 schema
-- 需要以 Agent A 暴露出来的只读接口为准
+- README observability 章节同步
+- 用户手册同步
+- viewer session 搜索 / 状态过滤 / 来源过滤 / request 跳转
+- viewer route 测试更新
 
 详细开发文档：
 
 - `docs/2026-03-31-agent-c-docs-and-viewer-polish.zh-CN.md`
 
-## 7. 并行开发规则
+## 7. 下一轮并行建议（可选）
 
-为避免 agent 并行开发互相覆盖，建议遵循：
+若继续并行开发，建议改成 2 路：
 
-- 每个 agent 有明确文件 ownership
-- 不要跨 agent 改动彼此的主文件
-- 如果必须修改共享文件，例如 `storage.ts` 或 `types.ts`，优先让 Agent A 拥有最终集成权
-- Agent C 不直接改后端 schema
-- 合并顺序建议：
-  1. Agent A
-  2. Agent B
-  3. Agent C
-
-并行开发建议：
-
-- 每个 agent 使用独立 worktree 和分支
-- Agent A 先冻结 schema 草案，再允许 Agent B 和 Agent C 基于该草案推进
-- Agent B 的 benchmark 结果应基于 Agent A 合入后的版本复测一次
-- Agent C 的 viewer 增强必须避免阻塞 Agent A 与 Agent B 的后端联调
-
-## 8. 推荐执行顺序
-
-若资源有限，不一定要三路全开。推荐优先级：
-
-1. Agent A
-2. Agent B
-3. Agent C
-
-原因：
-
-- Agent A 决定系统是否真正开始产生“分析价值”
-- Agent B 决定观测覆盖是否完整，并提供性能验收证据
-- Agent C 负责把已实现能力转成可用的文档和更顺手的阅读体验
+1. Agent X：`tool_event` + `analysis_fact` 聚合查询
+2. Agent Y：benchmark 实测结果 + `.claude/` lint 收尾
 
 ## 9. 当前结论
 
-当前 observability 计划已经完成了 MVP 的主体框架，系统已经从“设计阶段”进入“debug 与分析能力补完阶段”。
+当前 observability 计划已完成 A/B/C 三个并行任务并合并到主分支，系统已从“框架阶段”进入“分析深化与工程收尾阶段”。
 
-下一阶段不应再把重点放在“有没有页面”，而应聚焦：
+下一阶段应聚焦：
 
-- 质量信号
-- 派生事实
-- 路由覆盖完整性
-- benchmark 与 README 收尾
+- `tool_event`
+- `analysis_fact` 聚合读视图
+- benchmark 实测数据
+- lint 工作区治理
 
-换句话说：**平台已经搭起来了，下一步要让它真正会分析。**
+换句话说：**观测平台已可用，下一步是把“可观察”升级为“可决策”。**

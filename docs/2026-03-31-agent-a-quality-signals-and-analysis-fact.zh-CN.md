@@ -1,5 +1,15 @@
 # Agent A 开发文档：质量信号与派生事实核心
 
+## 执行状态
+
+- 状态：已完成并合并到主分支 `all`
+- 合并提交：`1bfccc6`
+- 交付摘要：
+  - 落地 4 个规则型质量信号
+  - 落地 `analysis_fact` 存储与读取
+  - 在 session 详情返回中加入 `analysisFacts`
+  - 新增 `tests/observability/worker.test.ts`
+
 ## 1. 目标
 
 本 agent 负责把当前 observability 系统从“能记录事实”推进到“能产出最小质量诊断”。

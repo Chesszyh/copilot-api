@@ -1,5 +1,15 @@
 # Agent C 开发文档：文档同步与 Viewer 轻量增强
 
+## 执行状态
+
+- 状态：已完成并合并到主分支 `all`
+- 合并提交：`5fcd41f`
+- 交付摘要：
+  - README observability 章节同步
+  - 用户手册同步
+  - viewer 增加 session 搜索、状态/来源过滤、request 快速跳转
+  - `tests/observability/viewer-route.test.ts` 断言更新
+
 ## 1. 目标
 
 本 agent 负责把当前已实现的 observability 能力整理成可用文档，并对 viewer 做不影响后端协议的轻量增强。

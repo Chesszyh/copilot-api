@@ -1,5 +1,14 @@
 # Agent B 开发文档：路由覆盖、链路回归与性能基准
 
+## 执行状态
+
+- 状态：已完成并合并到主分支 `all`
+- 合并提交：`05674aa`
+- 交付摘要：
+  - `chat.completions` 路由 observability 接入
+  - 新增 `tests/observability/chat-completions-route.test.ts`
+  - 新增 `docs/observability-benchmarks.md`
+
 ## 1. 目标
 
 本 agent 负责保证 observability 在三条主要代理链路上的覆盖一致，并给出性能验收依据。
