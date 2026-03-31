@@ -5,7 +5,12 @@ import path from "node:path"
 
 import { PATHS } from "~/lib/paths"
 
-import type { ObservabilityRawReference, RequestEventRecord } from "./types"
+import type {
+  AnalysisFactRecord,
+  AnalysisFactValue,
+  ObservabilityRawReference,
+  RequestEventRecord,
+} from "./types"
 
 import {
   buildArtifactPaths,
@@ -67,6 +72,7 @@ export interface SessionListItem extends StoredSessionRecord {
 export interface SessionDetail {
   session: StoredSessionRecord
   requests: Array<StoredRequestEvent>
+  analysisFacts: Array<AnalysisFactRecord>
 }
 
 interface ResolvedStoragePaths {
@@ -128,6 +134,20 @@ const deserializeRawReference = (
   value: string | null | undefined,
 ): ObservabilityRawReference | null =>
   fromJson(value) as ObservabilityRawReference | null
+
+const serializeFactValue = (
+  value: AnalysisFactValue | undefined,
+): string | null => {
+  if (value === undefined) {
+    return null
+  }
+
+  return JSON.stringify(value)
+}
+
+const deserializeFactValue = (
+  value: string | null | undefined,
+): AnalysisFactValue => fromJson(value) as AnalysisFactValue
 
 const readRawReferencePath = (
   reference: ObservabilityRawReference,
@@ -220,6 +240,19 @@ export function createObservabilityStorage(
       updated_at INTEGER NOT NULL,
       PRIMARY KEY (request_id, kind),
       FOREIGN KEY(session_id) REFERENCES sessions(session_id) ON DELETE CASCADE
+    );
+
+    CREATE TABLE IF NOT EXISTS analysis_facts (
+      session_id TEXT NOT NULL,
+      request_id TEXT,
+      fact_type TEXT NOT NULL,
+      fact_value_json TEXT,
+      fact_score REAL,
+      source TEXT NOT NULL DEFAULT 'live',
+      created_at INTEGER NOT NULL,
+      PRIMARY KEY (session_id, request_id, fact_type),
+      FOREIGN KEY(session_id) REFERENCES sessions(session_id) ON DELETE CASCADE,
+      FOREIGN KEY(request_id) REFERENCES request_events(request_id) ON DELETE CASCADE
     );
   `)
 
@@ -609,6 +642,45 @@ export function createObservabilityStorage(
     ORDER BY request_started_at ASC
   `)
 
+  const insertOrReplaceAnalysisFact = db.prepare(`
+    INSERT OR REPLACE INTO analysis_facts (
+      session_id,
+      request_id,
+      fact_type,
+      fact_value_json,
+      fact_score,
+      source,
+      created_at
+    ) VALUES (
+      $sessionId,
+      $requestId,
+      $factType,
+      $factValueJson,
+      $factScore,
+      $source,
+      $createdAt
+    )
+  `)
+
+  const listAnalysisFactsBySessionStatement = db.prepare(`
+    SELECT
+      session_id AS sessionId,
+      request_id AS requestId,
+      fact_type AS factType,
+      fact_value_json AS factValueJson,
+      fact_score AS factScore,
+      source,
+      created_at AS createdAt
+    FROM analysis_facts
+    WHERE session_id = $sessionId
+    ORDER BY created_at ASC, fact_type ASC
+  `)
+
+  const deleteAnalysisFactsBySessionStatement = db.prepare(`
+    DELETE FROM analysis_facts
+    WHERE session_id = $sessionId
+  `)
+
   const summaryStatement = db.prepare(`
     SELECT
       (SELECT COUNT(*) FROM sessions) AS sessionCount,
@@ -699,6 +771,58 @@ export function createObservabilityStorage(
       } as never)
 
       return event
+    },
+
+    saveAnalysisFacts(
+      facts: Array<AnalysisFactRecord>,
+    ): Array<AnalysisFactRecord> {
+      for (const fact of facts) {
+        insertOrReplaceAnalysisFact.run({
+          $sessionId: fact.sessionId,
+          $requestId: fact.requestId ?? null,
+          $factType: fact.factType,
+          $factValueJson: serializeFactValue(fact.factValue),
+          $factScore: fact.factScore ?? null,
+          $source: fact.source ?? "live",
+          $createdAt: fact.createdAt,
+        } as never)
+      }
+
+      return facts.map((fact) => ({
+        ...fact,
+        requestId: fact.requestId ?? null,
+        source: fact.source ?? "live",
+      }))
+    },
+
+    replaceSessionAnalysisFacts(
+      sessionId: string,
+      facts: Array<AnalysisFactRecord>,
+    ): Array<AnalysisFactRecord> {
+      deleteAnalysisFactsBySessionStatement.run({
+        $sessionId: sessionId,
+      } as never)
+      return storage.saveAnalysisFacts(facts)
+    },
+
+    listAnalysisFactsBySession(sessionId: string): Array<AnalysisFactRecord> {
+      const rows = listAnalysisFactsBySessionStatement.all({
+        $sessionId: sessionId,
+      }) as Array<
+        Omit<AnalysisFactRecord, "factValue"> & {
+          factValueJson: string | null
+        }
+      >
+
+      return rows.map((row) => ({
+        sessionId: row.sessionId,
+        requestId: row.requestId ?? null,
+        factType: row.factType,
+        factScore: row.factScore ?? null,
+        source: row.source ?? "live",
+        createdAt: row.createdAt,
+        factValue: deserializeFactValue(row.factValueJson),
+      }))
     },
 
     getRequestEvent(requestId: string): StoredRequestEvent | null {
@@ -957,6 +1081,7 @@ export function createObservabilityStorage(
           stream: toBoolean(row.stream),
           rawReference: deserializeRawReference(row.rawReferenceJson),
         })),
+        analysisFacts: storage.listAnalysisFactsBySession(sessionId),
       }
     },
 

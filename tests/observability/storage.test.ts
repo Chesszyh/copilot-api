@@ -192,3 +192,86 @@ test("stores source and scenario, and resetMockData only removes mock records", 
     await fs.rm(baseDir, { recursive: true, force: true })
   }
 })
+
+test("stores analysis facts and returns them in session detail", async () => {
+  const baseDir = await createTempDir()
+  const storage = createObservabilityStorage({ baseDir })
+
+  try {
+    storage.upsertSession({
+      sessionId: "session-facts",
+      startedAt: 1000,
+      status: "completed",
+    })
+
+    storage.saveRequestEvent({
+      requestId: "request-facts-1",
+      sessionId: "session-facts",
+      traceId: "trace-facts-1",
+      routeType: "messages",
+      method: "POST",
+      path: "/v1/messages",
+      stream: false,
+      requestStartedAt: 1010,
+      requestFinishedAt: 1020,
+      statusCode: 200,
+    })
+
+    storage.saveAnalysisFacts([
+      {
+        sessionId: "session-facts",
+        requestId: "request-facts-1",
+        factType: "retry_after_answer",
+        factValue: {
+          nextRequestId: "request-facts-2",
+          gapMs: 2200,
+        },
+        factScore: 0.7,
+        source: "live",
+        createdAt: 1030,
+      },
+      {
+        sessionId: "session-facts",
+        requestId: null,
+        factType: "user_correction_signal",
+        factValue: {
+          matchedPhrase: "try again",
+        },
+        factScore: 0.9,
+        source: "live",
+        createdAt: 1040,
+      },
+    ])
+
+    const detail = storage.getSessionDetail("session-facts")
+    expect(detail).not.toBeNull()
+    expect(detail?.analysisFacts).toEqual([
+      {
+        sessionId: "session-facts",
+        requestId: "request-facts-1",
+        factType: "retry_after_answer",
+        factValue: {
+          nextRequestId: "request-facts-2",
+          gapMs: 2200,
+        },
+        factScore: 0.7,
+        source: "live",
+        createdAt: 1030,
+      },
+      {
+        sessionId: "session-facts",
+        requestId: null,
+        factType: "user_correction_signal",
+        factValue: {
+          matchedPhrase: "try again",
+        },
+        factScore: 0.9,
+        source: "live",
+        createdAt: 1040,
+      },
+    ])
+  } finally {
+    storage.close()
+    await fs.rm(baseDir, { recursive: true, force: true })
+  }
+})

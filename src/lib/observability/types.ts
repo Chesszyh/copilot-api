@@ -64,15 +64,29 @@ export interface ToolEventRecord {
   isRecoveryCall?: boolean
 }
 
+export type AnalysisFactType =
+  | "retry_after_answer"
+  | "user_correction_signal"
+  | "redundant_tool_signal"
+  | "high_reasoning_low_outcome_signal"
+  | (string & {})
+
+export type AnalysisFactValue =
+  | string
+  | number
+  | boolean
+  | Array<unknown>
+  | Record<string, unknown>
+  | null
+
 export interface AnalysisFactRecord {
   sessionId: string
-  wastedTokenRatio?: number | null
-  detourRatio?: number | null
-  firstUsefulOutputMs?: number | null
-  retryAfterAnswerRate?: number | null
-  userCorrectionRate?: number | null
-  redundantToolCallRate?: number | null
-  highReasoningLowOutcomeRate?: number | null
+  requestId?: string | null
+  factType: AnalysisFactType
+  factValue?: AnalysisFactValue
+  factScore?: number | null
+  source?: "live" | "mock"
+  createdAt: number
 }
 
 export type ObservabilityEnqueueMode = "full" | "sampled" | "minimal"
