@@ -16,3 +16,4 @@ dist/
 # local worktrees
 .worktrees/
 wiki/
+/examples
