@@ -433,6 +433,10 @@
         grid-template-columns: repeat(2, minmax(0, 1fr));
       }
 
+      .detail-meta > * {
+        min-width: 0;
+      }
+
       .field {
         display: grid;
         gap: 6px;
@@ -440,6 +444,7 @@
         border-radius: 18px;
         background: rgba(255, 255, 255, 0.03);
         border: 1px solid rgba(255, 255, 255, 0.06);
+        min-width: 0;
       }
 
       .field__label {
@@ -454,6 +459,70 @@
         font-size: 0.93rem;
         line-height: 1.5;
         word-break: break-word;
+      }
+
+      .field select {
+        width: 100%;
+        min-width: 0;
+        max-width: 100%;
+        border-radius: 12px;
+        border: 1px solid rgba(255, 255, 255, 0.09);
+        padding: 10px 11px;
+        background: rgba(8, 16, 28, 0.88);
+        color: var(--text);
+        font: inherit;
+      }
+
+      .field select:focus-visible {
+        outline: 2px solid var(--amber);
+        outline-offset: 2px;
+      }
+
+      .analysis-strip {
+        border: 1px solid var(--border);
+        border-radius: 24px;
+        background: var(--panel);
+        box-shadow: var(--shadow);
+        padding: 14px 16px;
+        display: grid;
+        gap: 10px;
+      }
+
+      .analysis-strip__meta {
+        display: flex;
+        gap: 10px;
+        flex-wrap: wrap;
+      }
+
+      .analysis-strip__chips {
+        display: flex;
+        gap: 8px;
+        flex-wrap: wrap;
+      }
+
+      .analysis-chip {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        padding: 6px 10px;
+        border-radius: 999px;
+        border: 1px solid rgba(121, 169, 255, 0.32);
+        background: rgba(79, 140, 255, 0.08);
+        color: #d9e8ff;
+        font-family: "Fira Code", monospace;
+        font-size: 0.78rem;
+      }
+
+      .analysis-list {
+        display: grid;
+        gap: 8px;
+      }
+
+      .analysis-item {
+        border-radius: 14px;
+        padding: 10px 12px;
+        border: 1px solid rgba(255, 255, 255, 0.06);
+        background: rgba(255, 255, 255, 0.03);
       }
 
       .timeline {
@@ -809,6 +878,24 @@
           </article>
         </div>
 
+        <article class="analysis-strip" aria-label="分析聚合概览">
+          <div class="summary-card__label">
+            <span>Analysis Facts</span>
+            <span class="pill">聚合</span>
+          </div>
+          <div class="analysis-strip__meta">
+            <span class="analysis-chip"
+              >total=<span id="analysis-total-facts">—</span></span
+            >
+            <span class="analysis-chip"
+              >sessions=<span id="analysis-session-count">—</span></span
+            >
+          </div>
+          <div class="analysis-strip__chips" id="analysis-top-facts">
+            <span class="analysis-chip">暂无分析聚合数据</span>
+          </div>
+        </article>
+
         <div class="workspace">
           <aside class="panel" aria-label="session 列表">
             <div class="panel-header">
@@ -907,6 +994,14 @@
                 <span class="field__label">Request Timeline</span>
                 <div class="timeline" id="request-timeline"></div>
               </div>
+              <div class="field">
+                <span class="field__label">Tool Events</span>
+                <div class="analysis-list" id="tool-events-list"></div>
+              </div>
+              <div class="field">
+                <span class="field__label">Analysis Facts</span>
+                <div class="analysis-list" id="analysis-facts-list"></div>
+              </div>
             </div>
           </section>
         </div>
@@ -971,6 +1066,7 @@
 
       const state = {
         summary: null,
+        analysisOverview: null,
         sessions: [],
         selectedSessionId: null,
         selectedSession: null,
@@ -992,6 +1088,9 @@
         summaryRequestCount: document.getElementById("summary-request-count"),
         summaryFailedCount: document.getElementById("summary-failed-count"),
         summaryPinnedCount: document.getElementById("summary-pinned-count"),
+        analysisTotalFacts: document.getElementById("analysis-total-facts"),
+        analysisSessionCount: document.getElementById("analysis-session-count"),
+        analysisTopFacts: document.getElementById("analysis-top-facts"),
         sessionCountBadge: document.getElementById("session-count-badge"),
         sessionList: document.getElementById("session-list"),
         sessionSearch: document.getElementById("session-search"),
@@ -1006,6 +1105,8 @@
         detailUpdatedAt: document.getElementById("detail-updated-at"),
         requestJumpList: document.getElementById("request-jump-list"),
         requestTimeline: document.getElementById("request-timeline"),
+        toolEventsList: document.getElementById("tool-events-list"),
+        analysisFactsList: document.getElementById("analysis-facts-list"),
         detailHelp: document.getElementById("detail-help"),
         pinToggle: document.getElementById("pin-toggle"),
         refreshAll: document.getElementById("refresh-all"),
@@ -1338,6 +1439,64 @@
         elements.summaryPinnedCount.textContent = formatMaybeNumber(summary?.pinnedSessionCount);
       }
 
+      function renderAnalysisOverview(overview) {
+        elements.analysisTotalFacts.textContent = formatMaybeNumber(overview?.totalFacts);
+        elements.analysisSessionCount.textContent = formatMaybeNumber(overview?.sessionsWithFacts);
+        elements.analysisTopFacts.innerHTML = "";
+
+        const topFacts = Array.isArray(overview?.factsByType) ? overview.factsByType.slice(0, 6) : [];
+        if (topFacts.length === 0) {
+          elements.analysisTopFacts.innerHTML = '<span class="analysis-chip">暂无分析聚合数据</span>';
+          return;
+        }
+
+        for (const fact of topFacts) {
+          const chip = document.createElement("span");
+          chip.className = "analysis-chip";
+          chip.textContent = `${fact.factType}: ${formatMaybeNumber(fact.count)}`;
+          elements.analysisTopFacts.appendChild(chip);
+        }
+      }
+
+      function renderToolEvents(toolEvents) {
+        elements.toolEventsList.innerHTML = "";
+        if (!Array.isArray(toolEvents) || toolEvents.length === 0) {
+          elements.toolEventsList.innerHTML =
+            "<div class='analysis-item empty-state'>暂无 tool events。</div>";
+          return;
+        }
+
+        for (const event of toolEvents) {
+          const item = document.createElement("article");
+          item.className = "analysis-item";
+          item.innerHTML = `
+            <div><span class="code">${escapeHtml(event.toolName ?? "—")}</span> · ${escapeHtml(event.toolType ?? "tool_call")}</div>
+            <div class="code">request=${escapeHtml(event.requestId ?? "—")} success=${escapeHtml(String(event.success))}</div>
+            <div class="code">redundant=${escapeHtml(String(Boolean(event.isRedundantCall)))} recovery=${escapeHtml(String(Boolean(event.isRecoveryCall)))}</div>
+          `;
+          elements.toolEventsList.appendChild(item);
+        }
+      }
+
+      function renderAnalysisFacts(analysisFacts) {
+        elements.analysisFactsList.innerHTML = "";
+        if (!Array.isArray(analysisFacts) || analysisFacts.length === 0) {
+          elements.analysisFactsList.innerHTML =
+            "<div class='analysis-item empty-state'>暂无 analysis facts。</div>";
+          return;
+        }
+
+        for (const fact of analysisFacts) {
+          const item = document.createElement("article");
+          item.className = "analysis-item";
+          item.innerHTML = `
+            <div><span class="code">${escapeHtml(fact.factType ?? "unknown")}</span> · score=${escapeHtml(formatMaybeNumber(fact.factScore))}</div>
+            <div class="code">request=${escapeHtml(fact.requestId ?? "session-level")} source=${escapeHtml(fact.source ?? "live")}</div>
+          `;
+          elements.analysisFactsList.appendChild(item);
+        }
+      }
+
       function getFilteredSessions() {
         return state.sessions.filter((session) => {
           const searchText = state.filters.search.trim().toLowerCase();
@@ -1427,6 +1586,8 @@
         elements.pinToggle.disabled = true;
         elements.pinToggle.textContent = "Pin";
         elements.requestJumpList.innerHTML = '<option value="">选择请求后快速定位</option>';
+        elements.toolEventsList.innerHTML = "";
+        elements.analysisFactsList.innerHTML = "";
       }
 
       function renderDetail(detail) {
@@ -1456,6 +1617,8 @@
         elements.detailHelp.textContent = `${requests.length} 条请求记录，最后更新时间 ${formatDateTime(session.updatedAt)}。`;
 
         elements.requestTimeline.innerHTML = "";
+        elements.toolEventsList.innerHTML = "";
+        elements.analysisFactsList.innerHTML = "";
         elements.requestJumpList.innerHTML = '<option value="">选择请求后快速定位</option>';
         state.actionPayloads.clear();
         if (requests.length === 0) {
@@ -1516,12 +1679,20 @@
           option.textContent = `${request.requestId} · ${request.routeType} · ${request.model ?? "—"}`;
           elements.requestJumpList.appendChild(option);
         }
+
+        renderToolEvents(detail.toolEvents);
+        renderAnalysisFacts(detail.analysisFacts);
       }
 
       async function loadSummary() {
-        const summary = await fetchJson("/observability/summary");
+        const [summary, analysisOverview] = await Promise.all([
+          fetchJson("/observability/summary"),
+          fetchJson("/observability/analysis").catch(() => null),
+        ]);
         state.summary = summary;
+        state.analysisOverview = analysisOverview;
         renderSummary(summary);
+        renderAnalysisOverview(analysisOverview);
       }
 
       async function loadSessions() {
