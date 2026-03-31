@@ -10,8 +10,9 @@
 - 将原始请求/响应正文短期保存到本地文件
 - 支持对 session 执行 pin / unpin
 - 提供本地 observability API 读取汇总与会话详情
-
-当前版本重点是“数据采集 + API 读取”，**还没有单独的新前端面板页面**。
+- 提供独立的 observability viewer 页面
+- 提供 debug mock 数据生成与 reset 能力
+- 支持 JSON 源码视图、JSON 下载、复制与文件路径展示
 
 ## 2. 更新后的面板在哪里看
 
@@ -23,22 +24,42 @@
 
 它显示的是 GitHub Copilot 上游 usage/quota 信息，不是新的 observability session 分析页面。
 
-### 2.2 新增 observability 能力的查看方式
+### 2.2 Observability Viewer
 
-当前新增的可观测性内容通过 API 查看：
+当前新增的独立页面地址是：
+
+- `http://localhost:4141/observability-viewer`
+
+如果你改了启动端口，例如 `4142`，则对应为：
+
+- `http://localhost:4142/observability-viewer`
+
+该页面当前支持：
+
+- summary 概览
+- session 列表
+- session 详情
+- request 时间线
+- pin / unpin
+- debug mock 入口
+- JSON 源码视图
+- JSON 下载、复制与文件路径展示
+
+### 2.3 新增 observability API
 
 - `GET /observability/summary`
 - `GET /observability/sessions`
 - `GET /observability/sessions/:sessionId`
 - `POST /observability/pin/:sessionId`
 - `DELETE /observability/pin/:sessionId`
+- `POST /observability/mock/generate`
+- `POST /observability/mock/reset`
 
 也就是说：
 
 - **旧页面**：看 Copilot 配额和 usage
-- **新 API**：看本地采集到的 session/request 数据
-
-如果后续需要，我可以再补一个独立 observability viewer 页面，把这些 API 可视化出来。
+- **新页面**：看本地 observability 会话与请求数据
+- **新 API**：给 viewer 和调试脚本提供数据与控制入口
 
 ## 3. 启用方式
 
@@ -68,6 +89,7 @@ bun install
 {
   "observability": {
     "enabled": true,
+    "debugMockEnabled": false,
     "queueCapacity": 2048,
     "batchSize": 100,
     "flushIntervalMs": 1000,
@@ -385,7 +407,15 @@ find ~/.local/share/copilot-api/observability -maxdepth 3 -type f | sort
 
 ### 11.1 为什么我只能看到 `/usage-viewer`，看不到新的面板？
 
-因为本次交付的是 observability API，不是新的前端页面。旧页面仍然只显示 Copilot usage/quota。
+先确认你访问的是：
+
+- `/observability-viewer`
+
+而不是：
+
+- `/usage-viewer`
+
+`/usage-viewer` 仍然只显示 GitHub Copilot usage/quota；新的本地观测面板在 `/observability-viewer`。
 
 ### 11.2 为什么 `summary` 是空的？
 
@@ -408,10 +438,9 @@ find ~/.local/share/copilot-api/observability -maxdepth 3 -type f | sort
 
 当前用户最常见的下一步需求会是：
 
-- 新增独立 observability viewer 页面
 - 增加 session 筛选、排序、搜索
 - 增加更细的质量信号与评分
 - 增加 benchmark 文档与压测脚本
 - 增加多用户视图
 
-如果你准备继续推进，优先级最高的一步通常是：**补一个独立 observability 页面，而不是继续堆 API。**
+如果你准备继续推进，优先级最高的一步通常是：**补规则型质量信号和 benchmark，而不是继续扩 viewer 的表层 UI。**
