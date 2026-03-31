@@ -455,9 +455,10 @@ find ~/.local/share/copilot-api/observability -maxdepth 3 -type f | sort
 
 当前用户最常见的下一步需求会是：
 
-- 增加 session 筛选、排序、搜索
-- 增加更细的质量信号与评分
-- 增加 benchmark 文档与压测脚本
+- 增加 `tool_event` 的存储与读取
+- 增加 `analysis_fact` 聚合视图（按信号类型、时间窗口统计）
+- 补 benchmark 实测结果（off/on 的 p50/p95/p99、RPS、RSS、backlog、dropped）
 - 增加多用户视图
+- 处理 `.claude/` 对主分支 lint 的影响（忽略、迁出或纳入规范）
 
-如果你准备继续推进，优先级最高的一步通常是：**补规则型质量信号和 benchmark，而不是继续扩 viewer 的表层 UI。**
+如果你准备继续推进，优先级最高的一步通常是：**先补 `tool_event` 和 benchmark 实测结果，再考虑继续扩展 viewer UI。**
