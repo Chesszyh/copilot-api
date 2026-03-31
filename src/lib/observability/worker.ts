@@ -3,9 +3,10 @@ import { createHandlerLogger } from "~/lib/logger"
 
 import type {
   AnalysisFactRecord,
-  RequestEventRecord,
   SessionRecord,
   ObservabilityEnvelope,
+  RequestEventRecord,
+  ToolEventRecord,
 } from "./types"
 
 import { getObservabilityQueue } from "./queue"
@@ -84,6 +85,286 @@ const normalizeFingerprint = (
   } catch {
     return value.replaceAll(/\s+/g, " ").trim()
   }
+}
+
+const TOOL_TEXT_LIMIT = 800
+
+const summarizeToolField = (value: unknown): string | null => {
+  if (value === undefined || value === null) {
+    return null
+  }
+
+  const text =
+    typeof value === "string" ? value : JSON.stringify(sortJsonValue(value))
+  if (!text) {
+    return null
+  }
+
+  if (text.length <= TOOL_TEXT_LIMIT) {
+    return text
+  }
+
+  return `${text.slice(0, TOOL_TEXT_LIMIT)}...[truncated]`
+}
+
+const parseJsonSafely = (value: string | null | undefined): unknown => {
+  if (!value) {
+    return null
+  }
+
+  try {
+    return JSON.parse(value)
+  } catch {
+    return null
+  }
+}
+
+const collectNestedToolNodes = (
+  value: unknown,
+): Array<Record<string, unknown>> => {
+  const result: Array<Record<string, unknown>> = []
+  const visited = new Set<unknown>()
+
+  const visit = (node: unknown): void => {
+    if (!node || typeof node !== "object") {
+      return
+    }
+    if (visited.has(node)) {
+      return
+    }
+    visited.add(node)
+
+    if (Array.isArray(node)) {
+      for (const item of node) {
+        visit(item)
+      }
+      return
+    }
+
+    const record = node as Record<string, unknown>
+    const type = typeof record.type === "string" ? record.type : ""
+    if (
+      type === "tool_use"
+      || type === "tool_result"
+      || Array.isArray(record.tool_calls)
+      || (record.function_call && typeof record.function_call === "object")
+    ) {
+      result.push(record)
+    }
+
+    for (const nested of Object.values(record)) {
+      visit(nested)
+    }
+  }
+
+  visit(value)
+  return result
+}
+
+const buildBaseToolEvent = (
+  request: RequestEventRecord,
+  session: SessionRecord,
+): Omit<ToolEventRecord, "toolEventId" | "toolName"> => ({
+  sessionId: request.sessionId ?? null,
+  requestId: request.requestId,
+  startedAt: request.requestStartedAt,
+  finishedAt: request.requestFinishedAt ?? request.requestStartedAt,
+  source: session.source ?? "live",
+})
+
+interface ToolEventContext {
+  request: RequestEventRecord
+  session: SessionRecord
+  nodeIndex: number
+}
+
+const extractAnthropicToolUseEvent = (
+  context: ToolEventContext,
+  node: Record<string, unknown>,
+): ToolEventRecord | null => {
+  if (node.type !== "tool_use" || typeof node.name !== "string") {
+    return null
+  }
+
+  const { request, session, nodeIndex } = context
+  const toolCallId =
+    typeof node.id === "string" ? node.id : `tool-use-${nodeIndex}`
+  return {
+    ...buildBaseToolEvent(request, session),
+    toolEventId: `${request.requestId}:use:${toolCallId}`,
+    requestId: request.requestId,
+    toolName: node.name,
+    toolType: "tool_use",
+    argumentsSummary: summarizeToolField(node.input ?? node.arguments),
+    success: null,
+  }
+}
+
+const extractAnthropicToolResultEvent = (
+  context: ToolEventContext,
+  node: Record<string, unknown>,
+): ToolEventRecord | null => {
+  if (node.type !== "tool_result") {
+    return null
+  }
+
+  const { request, session, nodeIndex } = context
+  const toolCallId =
+    typeof node.tool_use_id === "string" ?
+      node.tool_use_id
+    : `tool-result-${nodeIndex}`
+  return {
+    ...buildBaseToolEvent(request, session),
+    toolEventId: `${request.requestId}:result:${toolCallId}`,
+    requestId: request.requestId,
+    toolName: "tool_result",
+    toolType: "tool_result",
+    outputSummary: summarizeToolField(node.content ?? node.output),
+    success: true,
+  }
+}
+
+// eslint-disable-next-line complexity
+const extractToolCallEvents = (
+  context: ToolEventContext,
+  node: Record<string, unknown>,
+): Array<ToolEventRecord> => {
+  const { request, session, nodeIndex } = context
+  const events: Array<ToolEventRecord> = []
+
+  const toolUseEvent = extractAnthropicToolUseEvent(context, node)
+  if (toolUseEvent) {
+    events.push(toolUseEvent)
+  }
+
+  const toolResultEvent = extractAnthropicToolResultEvent(context, node)
+  if (toolResultEvent) {
+    events.push(toolResultEvent)
+  }
+
+  if (Array.isArray(node.tool_calls)) {
+    for (const [index, call] of node.tool_calls.entries()) {
+      if (!call || typeof call !== "object") {
+        continue
+      }
+      const callObj = call as Record<string, unknown>
+      const functionObj =
+        callObj.function && typeof callObj.function === "object" ?
+          (callObj.function as Record<string, unknown>)
+        : {}
+      const functionName =
+        typeof functionObj.name === "string" ? functionObj.name : null
+      const directName = typeof callObj.name === "string" ? callObj.name : null
+      const toolName = functionName ?? directName
+      if (!toolName) {
+        continue
+      }
+      const callId =
+        typeof callObj.id === "string" ?
+          callObj.id
+        : `tool-call-${nodeIndex}-${index}`
+      events.push({
+        ...buildBaseToolEvent(request, session),
+        toolEventId: `${request.requestId}:call:${callId}`,
+        requestId: request.requestId,
+        toolName,
+        toolType: typeof callObj.type === "string" ? callObj.type : "tool_call",
+        argumentsSummary: summarizeToolField(
+          functionObj.arguments ?? callObj.arguments,
+        ),
+        success: null,
+      })
+    }
+  }
+
+  if (node.function_call && typeof node.function_call === "object") {
+    const functionCall = node.function_call as Record<string, unknown>
+    const toolName =
+      typeof functionCall.name === "string" ? functionCall.name : null
+    if (toolName) {
+      events.push({
+        ...buildBaseToolEvent(request, session),
+        toolEventId: `${request.requestId}:fn:${nodeIndex}:${toolName}`,
+        requestId: request.requestId,
+        toolName,
+        toolType: "function_call",
+        argumentsSummary: summarizeToolField(functionCall.arguments),
+        success: null,
+      })
+    }
+  }
+
+  return events
+}
+
+const applyToolFlags = (
+  events: Array<ToolEventRecord>,
+  facts: Array<AnalysisFactRecord>,
+): Array<ToolEventRecord> => {
+  const redundantRequestIds = new Set(
+    facts
+      .filter((fact) => fact.factType === "redundant_tool_signal")
+      .map((fact) => fact.requestId)
+      .filter((value): value is string => value !== null),
+  )
+
+  const recoveryRequestIds = new Set(
+    facts
+      .filter((fact) => fact.factType === "retry_after_answer")
+      .map((fact) => {
+        const value = fact.factValue as Record<string, unknown> | null
+        return typeof value?.nextRequestId === "string" ?
+            value.nextRequestId
+          : null
+      })
+      .filter((value): value is string => value !== null),
+  )
+
+  return events.map((event) => ({
+    ...event,
+    isRedundantCall: redundantRequestIds.has(event.requestId),
+    isRecoveryCall: recoveryRequestIds.has(event.requestId),
+  }))
+}
+
+export const deriveToolEventsForSession = (
+  session: SessionRecord,
+  requests: Array<RequestEventRecord>,
+): Array<ToolEventRecord> => {
+  const parsedEvents: Array<ToolEventRecord> = []
+  const dedupe = new Set<string>()
+
+  for (const request of requests) {
+    const payloadJson = parseJsonSafely(request.sanitizedPayload)
+    const responseJson = parseJsonSafely(request.sanitizedResponse)
+    const nodes = [
+      ...collectNestedToolNodes(payloadJson),
+      ...collectNestedToolNodes(responseJson),
+    ]
+
+    for (const [nodeIndex, node] of nodes.entries()) {
+      const events = extractToolCallEvents(
+        { request, session, nodeIndex },
+        node,
+      )
+      for (const event of events) {
+        const key = [
+          event.requestId,
+          event.toolName,
+          event.toolType ?? "",
+          event.argumentsSummary ?? "",
+          event.outputSummary ?? "",
+        ].join("|")
+        if (dedupe.has(key)) {
+          continue
+        }
+        dedupe.add(key)
+        parsedEvents.push(event)
+      }
+    }
+  }
+
+  return parsedEvents
 }
 
 const isToolLikePayload = (value: string | null | undefined): boolean => {
@@ -312,11 +593,19 @@ export const persistObservabilityEnvelope = (
 
   const sessionDetail = currentStorage.getSessionDetail(sessionId)
   if (sessionDetail) {
-    currentStorage.replaceSessionAnalysisFacts(
+    const derivedFacts = deriveAnalysisFactsForSession(
+      sessionDetail.session,
+      sessionDetail.requests,
+    )
+    currentStorage.replaceSessionAnalysisFacts(sessionId, derivedFacts)
+    currentStorage.replaceSessionToolEvents(
       sessionId,
-      deriveAnalysisFactsForSession(
-        sessionDetail.session,
-        sessionDetail.requests,
+      applyToolFlags(
+        deriveToolEventsForSession(
+          sessionDetail.session,
+          sessionDetail.requests,
+        ),
+        derivedFacts,
       ),
     )
   }

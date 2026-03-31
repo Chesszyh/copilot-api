@@ -51,6 +51,7 @@
 ### 2.3 新增 observability API
 
 - `GET /observability/summary`
+- `GET /observability/analysis`
 - `GET /observability/sessions`
 - `GET /observability/sessions/:sessionId`
 - `POST /observability/pin/:sessionId`
@@ -149,7 +150,23 @@ curl http://localhost:4141/observability/sessions
 curl "http://localhost:4141/observability/sessions?limit=20&offset=0"
 ```
 
-### 4.3 `GET /observability/sessions/:sessionId`
+### 4.3 `GET /observability/analysis`
+
+作用：读取 `analysis_fact` 聚合统计（按事实类型分组）。
+
+示例：
+
+```bash
+curl http://localhost:4141/observability/analysis
+```
+
+当前返回字段包括：
+
+- `totalFacts`
+- `sessionsWithFacts`
+- `factsByType[]`（`factType`、`count`、`avgScore`）
+
+### 4.4 `GET /observability/sessions/:sessionId`
 
 作用：读取单个 session 详情。
 
@@ -163,10 +180,12 @@ curl http://localhost:4141/observability/sessions/<session_id>
 
 - session 基本信息
 - 该 session 下的 request 列表
+- 该 session 下的 `toolEvents`
+- 该 session 下的 `analysisFacts`
 - 每个 request 的 model、route、timing、token、摘要、raw reference 等字段
 - viewer 中可通过 request 跳转器快速定位到单条请求
 
-### 4.4 `POST /observability/pin/:sessionId`
+### 4.5 `POST /observability/pin/:sessionId`
 
 作用：将一个 session 标记为 pinned。
 
@@ -181,7 +200,7 @@ curl -X POST http://localhost:4141/observability/pin/<session_id>
 - 该 session 将被标记为长期保留
 - 其对应的 raw 正文文件不再参与 3 天 TTL 清理
 
-### 4.5 `DELETE /observability/pin/:sessionId`
+### 4.6 `DELETE /observability/pin/:sessionId`
 
 作用：取消 pin。
 
@@ -258,6 +277,15 @@ COPILOT_API_HOME=/tmp/copilot-api bun run start
 - `sanitizedPayload`
 - `sanitizedResponse`
 - `rawReference`
+
+当前也会尽力从 request/response JSON 中自动派生工具事件并落库为 `tool_event`，包含：
+
+- `toolName`
+- `toolType`
+- `argumentsSummary`
+- `outputSummary`
+- `isRedundantCall`
+- `isRecoveryCall`
 
 viewer 当前还提供以下只读辅助能力：
 

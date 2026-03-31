@@ -10,6 +10,7 @@ import { completionRoutes } from "./routes/chat-completions/route"
 import { embeddingRoutes } from "./routes/embeddings/route"
 import { messageRoutes } from "./routes/messages/route"
 import { modelRoutes } from "./routes/models/route"
+import { createObservabilityAnalysisRoute } from "./routes/observability/analysis-route"
 import { createObservabilityMockRoute } from "./routes/observability/mock-route"
 import { createObservabilityPinRoute } from "./routes/observability/pin-route"
 import { createObservabilitySessionsRoute } from "./routes/observability/sessions-route"
@@ -37,6 +38,7 @@ server.use(
       "/observability-viewer",
       "/observability-viewer/",
       "/observability/summary",
+      "/observability/analysis",
       "/observability/sessions",
       "/observability/sessions/*",
       "/observability/pin/*",
@@ -69,6 +71,7 @@ server.route("/usage", usageRoute)
 server.route("/token", tokenRoute)
 server.route("/responses", responsesRoutes)
 server.route("/observability/summary", createObservabilitySummaryRoute())
+server.route("/observability/analysis", createObservabilityAnalysisRoute())
 server.route("/observability/sessions", createObservabilitySessionsRoute())
 server.route("/observability/pin", createObservabilityPinRoute())
 server.route(

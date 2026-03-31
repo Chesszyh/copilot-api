@@ -90,6 +90,7 @@ This project also ships with a local observability viewer for inspecting proxied
   - `http://localhost:4141/observability-viewer`
 - Local APIs used by the viewer:
   - `GET /observability/summary`
+  - `GET /observability/analysis`
   - `GET /observability/sessions`
   - `GET /observability/sessions/:sessionId`
   - `POST/DELETE /observability/pin/:sessionId`
@@ -101,7 +102,7 @@ This project also ships with a local observability viewer for inspecting proxied
   - `~/.local/share/copilot-api/observability/raw/`
   - `~/.local/share/copilot-api/observability/pinned/`
 
-The viewer currently supports summary cards, session search, status/source filtering, request jump navigation, pin/unpin, mock generation, and readable JSON source panels with download/copy actions.
+The viewer currently supports summary cards, session search, status/source filtering, request jump navigation, pin/unpin, mock generation, and readable JSON source panels with download/copy actions. Session detail responses now include derived `toolEvents` and `analysisFacts`.
 
 ## Better Agent Semantics
 

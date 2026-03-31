@@ -34,12 +34,15 @@
 - viewer 默认 JSON 源码视图
 - viewer session 搜索、状态/来源过滤、request 快速跳转
 - `analysis_fact` 落库与读取
+- `analysis_fact` 聚合查询接口（`/observability/analysis`）
+- `tool_event` 落库与读取（session 详情内返回）
 - 4 个规则型质量信号：
   - `retry_after_answer`
   - `user_correction_signal`
   - `redundant_tool_signal`
   - `high_reasoning_low_outcome_signal`
 - `chat.completions` 路由 observability 接入
+- worker 自动提取工具调用事件（OpenAI/Anthropic 常见 JSON 结构）
 - `docs/observability-benchmarks.md`
 
 ### 2.2 已合并提交（主分支 `all`）
@@ -71,13 +74,9 @@
 
 ## 3. 尚未完成的 TODO
 
-以下 TODO 是合并 Agent A/B/C 后仍然存在的项。
+当前剩余的主要 TODO 只有 benchmark 实测结果归档。
 
-### 3.1 `tool_event`
-
-设计文档中把 `tool_event` 列为核心实体之一，但当前实现还没有独立的 `tool_event` 存储与 API，因此 agent 工具路径分析仍不完整。
-
-### 3.2 benchmark 实测结果归档
+### 3.1 benchmark 实测结果归档
 
 `docs/observability-benchmarks.md` 已补齐方法和模板，但还缺真实环境的 off/on 压测结果表。
 
@@ -89,19 +88,10 @@
 - queue backlog 峰值
 - dropped events
 
-### 3.3 质量信号读视图增强
+已完成的工程收尾：
 
-`analysis_fact` 已进入 session detail，但还没有独立聚合视图（例如按信号类型统计、按时间窗口统计）。
-
-### 3.4 `.claude/` 对 lint 的影响（工程收尾）
-
-当前主工作树存在未跟踪目录 `.claude/`，会导致 `bun run lint` 扫到额外文件并失败。该问题不影响已合并的 observability 代码，但会影响主分支日常验证体验。
-
-建议在下一轮收尾中明确策略：
-
-- 忽略 `.claude/`
-- 或迁出仓库目录
-- 或纳入统一规范并通过 lint
+- `.claude/**` 已加入 eslint ignore
+- `.claude/` 已加入 `.gitignore`
 
 ## 4. 不属于当前 TODO 的事项
 
@@ -115,14 +105,11 @@
 
 ## 5. 下一阶段建议目标
 
-下一阶段建议把重点放在“分析能力补强 + 压测结果落地 + 工程收尾”。
+下一阶段只建议聚焦压测结果落地：
 
-建议目标：
-
-1. 增加 `tool_event` 存储与读取
-2. 为 `analysis_fact` 增加聚合读视图
-3. 填充 benchmark 实测结果
-4. 处理 `.claude/` 的 lint 影响
+1. 填充 benchmark 实测结果（off / on 对照）
+2. 固化执行脚本与采样窗口
+3. 将结果同步到 `docs/observability-benchmarks.md`
 
 ## 6. 本轮并行执行结果
 
@@ -175,13 +162,10 @@
 
 ## 9. 当前结论
 
-当前 observability 计划已完成 A/B/C 三个并行任务并合并到主分支，系统已从“框架阶段”进入“分析深化与工程收尾阶段”。
+当前 observability 计划已完成 A/B/C 三个并行任务并合并到主分支，且后续收尾已补上：
 
-下一阶段应聚焦：
-
-- `tool_event`
+- `tool_event` 存储与会话读取
 - `analysis_fact` 聚合读视图
-- benchmark 实测数据
-- lint 工作区治理
+- `.claude` lint 工作区治理
 
-换句话说：**观测平台已可用，下一步是把“可观察”升级为“可决策”。**
+当前系统处于“可用 + 可分析”状态。下一阶段主要是补齐真实性能基准数据。

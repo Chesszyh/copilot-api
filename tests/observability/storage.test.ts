@@ -275,3 +275,98 @@ test("stores analysis facts and returns them in session detail", async () => {
     await fs.rm(baseDir, { recursive: true, force: true })
   }
 })
+
+test("stores tool events and exposes analysis overview", async () => {
+  const baseDir = await createTempDir()
+  const storage = createObservabilityStorage({ baseDir })
+
+  try {
+    storage.upsertSession({
+      sessionId: "session-tools",
+      startedAt: 1000,
+      status: "completed",
+    })
+
+    storage.saveRequestEvent({
+      requestId: "request-tools-1",
+      sessionId: "session-tools",
+      traceId: "trace-tools-1",
+      routeType: "responses",
+      method: "POST",
+      path: "/v1/responses",
+      stream: true,
+      requestStartedAt: 1010,
+      requestFinishedAt: 1600,
+      statusCode: 200,
+    })
+
+    storage.replaceSessionToolEvents("session-tools", [
+      {
+        toolEventId: "tool-event-1",
+        sessionId: "session-tools",
+        requestId: "request-tools-1",
+        toolName: "search_code",
+        toolType: "tool_call",
+        argumentsSummary: '{"query":"retry logic"}',
+        startedAt: 1100,
+        finishedAt: 1400,
+        success: true,
+      },
+    ])
+
+    storage.replaceSessionAnalysisFacts("session-tools", [
+      {
+        sessionId: "session-tools",
+        requestId: "request-tools-1",
+        factType: "retry_after_answer",
+        factScore: 0.6,
+        source: "live",
+        createdAt: 1700,
+        factValue: { nextRequestId: "request-tools-2", gapMs: 2200 },
+      },
+      {
+        sessionId: "session-tools",
+        requestId: "request-tools-1",
+        factType: "user_correction_signal",
+        factScore: 0.8,
+        source: "live",
+        createdAt: 1750,
+        factValue: { matchedPhrase: "wrong" },
+      },
+    ])
+
+    const detail = storage.getSessionDetail("session-tools")
+    expect(detail?.toolEvents).toHaveLength(1)
+    const toolEvent = detail?.toolEvents[0]
+    expect(toolEvent).toMatchObject({
+      toolEventId: "tool-event-1",
+      sessionId: "session-tools",
+      requestId: "request-tools-1",
+      toolName: "search_code",
+      toolType: "tool_call",
+      argumentsSummary: '{"query":"retry logic"}',
+      startedAt: 1100,
+      finishedAt: 1400,
+      success: true,
+      retryOf: null,
+      outputSummary: null,
+      isRedundantCall: false,
+      isRecoveryCall: false,
+      source: "live",
+    })
+    expect(typeof toolEvent?.createdAt).toBe("number")
+    expect(typeof toolEvent?.updatedAt).toBe("number")
+
+    expect(storage.getAnalysisOverview()).toEqual({
+      totalFacts: 2,
+      sessionsWithFacts: 1,
+      factsByType: [
+        { factType: "retry_after_answer", count: 1, avgScore: 0.6 },
+        { factType: "user_correction_signal", count: 1, avgScore: 0.8 },
+      ],
+    })
+  } finally {
+    storage.close()
+    await fs.rm(baseDir, { recursive: true, force: true })
+  }
+})

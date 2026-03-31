@@ -15,5 +15,6 @@ dist/
 
 # local worktrees
 .worktrees/
+.claude/
 wiki/
 /examples

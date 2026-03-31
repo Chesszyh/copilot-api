@@ -62,6 +62,8 @@ export interface ToolEventRecord {
   outputSummary?: string | null
   isRedundantCall?: boolean
   isRecoveryCall?: boolean
+  source?: "live" | "mock"
+  createdAt?: number
 }
 
 export type AnalysisFactType =

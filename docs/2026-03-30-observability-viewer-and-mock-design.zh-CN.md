@@ -36,6 +36,7 @@
 页面只消费本地 observability API，不直接请求 GitHub Copilot。
 
 - `GET /observability/summary`
+- `GET /observability/analysis`
 - `GET /observability/sessions`
 - `GET /observability/sessions/:sessionId`
 - `POST /observability/pin/:sessionId`
@@ -62,4 +63,3 @@
 - pin / unpin 走本地 observability API
 - `debugMockEnabled` 为 true 时页面显示 mock 调试入口
 - 页面支持 reduced motion 与可见 focus 样式
-

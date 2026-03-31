@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import { Hono } from "hono"
 
+import { createObservabilityAnalysisRoute } from "~/routes/observability/analysis-route"
 import { createObservabilityPinRoute } from "~/routes/observability/pin-route"
 import { createObservabilitySessionsRoute } from "~/routes/observability/sessions-route"
 import { createObservabilitySummaryRoute } from "~/routes/observability/summary-route"
@@ -20,6 +21,32 @@ describe("observability routes", () => {
     expect(await response.json()).toEqual({
       sessionCount: 1,
       requestCount: 2,
+    })
+  })
+
+  test("analysis route returns aggregated analysis summary", async () => {
+    const app = new Hono()
+    app.route(
+      "/observability/analysis",
+      createObservabilityAnalysisRoute({
+        getAnalysisOverview: () => ({
+          totalFacts: 3,
+          sessionsWithFacts: 2,
+          factsByType: [
+            { factType: "retry_after_answer", count: 2, avgScore: 0.7 },
+          ],
+        }),
+      }),
+    )
+
+    const response = await app.request("/observability/analysis")
+    expect(response.status).toBe(200)
+    expect(await response.json()).toEqual({
+      totalFacts: 3,
+      sessionsWithFacts: 2,
+      factsByType: [
+        { factType: "retry_after_answer", count: 2, avgScore: 0.7 },
+      ],
     })
   })
 

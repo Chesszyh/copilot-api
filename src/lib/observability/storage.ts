@@ -7,9 +7,11 @@ import { PATHS } from "~/lib/paths"
 
 import type {
   AnalysisFactRecord,
+  AnalysisFactType,
   AnalysisFactValue,
   ObservabilityRawReference,
   RequestEventRecord,
+  ToolEventRecord,
 } from "./types"
 
 import {
@@ -72,7 +74,24 @@ export interface SessionListItem extends StoredSessionRecord {
 export interface SessionDetail {
   session: StoredSessionRecord
   requests: Array<StoredRequestEvent>
+  toolEvents: Array<StoredToolEvent>
   analysisFacts: Array<AnalysisFactRecord>
+}
+
+export interface StoredToolEvent extends ToolEventRecord {
+  source: "live" | "mock"
+  createdAt: number
+  updatedAt: number
+}
+
+export interface AnalysisOverview {
+  totalFacts: number
+  sessionsWithFacts: number
+  factsByType: Array<{
+    factType: AnalysisFactType
+    count: number
+    avgScore: number | null
+  }>
 }
 
 interface ResolvedStoragePaths {
@@ -254,6 +273,27 @@ export function createObservabilityStorage(
       FOREIGN KEY(session_id) REFERENCES sessions(session_id) ON DELETE CASCADE,
       FOREIGN KEY(request_id) REFERENCES request_events(request_id) ON DELETE CASCADE
     );
+
+    CREATE TABLE IF NOT EXISTS tool_events (
+      tool_event_id TEXT PRIMARY KEY,
+      session_id TEXT,
+      request_id TEXT NOT NULL,
+      tool_name TEXT NOT NULL,
+      tool_type TEXT,
+      arguments_summary TEXT,
+      started_at INTEGER NOT NULL,
+      finished_at INTEGER,
+      success INTEGER,
+      retry_of TEXT,
+      output_summary TEXT,
+      is_redundant_call INTEGER NOT NULL DEFAULT 0,
+      is_recovery_call INTEGER NOT NULL DEFAULT 0,
+      source TEXT NOT NULL DEFAULT 'live',
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL,
+      FOREIGN KEY(session_id) REFERENCES sessions(session_id) ON DELETE SET NULL,
+      FOREIGN KEY(request_id) REFERENCES request_events(request_id) ON DELETE CASCADE
+    );
   `)
 
   const ensureColumn = (
@@ -395,6 +435,59 @@ export function createObservabilityStorage(
       sanitized_payload = excluded.sanitized_payload,
       sanitized_response = excluded.sanitized_response,
       raw_reference_json = excluded.raw_reference_json,
+      updated_at = excluded.updated_at
+  `)
+
+  const upsertToolEvent = db.prepare(`
+    INSERT INTO tool_events (
+      tool_event_id,
+      session_id,
+      request_id,
+      tool_name,
+      tool_type,
+      arguments_summary,
+      started_at,
+      finished_at,
+      success,
+      retry_of,
+      output_summary,
+      is_redundant_call,
+      is_recovery_call,
+      source,
+      created_at,
+      updated_at
+    ) VALUES (
+      $toolEventId,
+      $sessionId,
+      $requestId,
+      $toolName,
+      $toolType,
+      $argumentsSummary,
+      $startedAt,
+      $finishedAt,
+      $success,
+      $retryOf,
+      $outputSummary,
+      $isRedundantCall,
+      $isRecoveryCall,
+      $source,
+      $createdAt,
+      $updatedAt
+    )
+    ON CONFLICT(tool_event_id) DO UPDATE SET
+      session_id = excluded.session_id,
+      request_id = excluded.request_id,
+      tool_name = excluded.tool_name,
+      tool_type = excluded.tool_type,
+      arguments_summary = excluded.arguments_summary,
+      started_at = excluded.started_at,
+      finished_at = excluded.finished_at,
+      success = excluded.success,
+      retry_of = excluded.retry_of,
+      output_summary = excluded.output_summary,
+      is_redundant_call = excluded.is_redundant_call,
+      is_recovery_call = excluded.is_recovery_call,
+      source = excluded.source,
       updated_at = excluded.updated_at
   `)
 
@@ -676,6 +769,34 @@ export function createObservabilityStorage(
     ORDER BY created_at ASC, fact_type ASC
   `)
 
+  const listToolEventsBySessionStatement = db.prepare(`
+    SELECT
+      tool_event_id AS toolEventId,
+      session_id AS sessionId,
+      request_id AS requestId,
+      tool_name AS toolName,
+      tool_type AS toolType,
+      arguments_summary AS argumentsSummary,
+      started_at AS startedAt,
+      finished_at AS finishedAt,
+      success,
+      retry_of AS retryOf,
+      output_summary AS outputSummary,
+      is_redundant_call AS isRedundantCall,
+      is_recovery_call AS isRecoveryCall,
+      source,
+      created_at AS createdAt,
+      updated_at AS updatedAt
+    FROM tool_events
+    WHERE session_id = $sessionId
+    ORDER BY started_at ASC, created_at ASC
+  `)
+
+  const deleteToolEventsBySessionStatement = db.prepare(`
+    DELETE FROM tool_events
+    WHERE session_id = $sessionId
+  `)
+
   const deleteAnalysisFactsBySessionStatement = db.prepare(`
     DELETE FROM analysis_facts
     WHERE session_id = $sessionId
@@ -687,6 +808,23 @@ export function createObservabilityStorage(
       (SELECT COUNT(*) FROM request_events) AS requestCount,
       (SELECT COUNT(*) FROM sessions WHERE pinned = 1) AS pinnedSessionCount,
       (SELECT COUNT(*) FROM request_events WHERE error_type IS NOT NULL OR status_code >= 400) AS failedRequestCount
+  `)
+
+  const analysisOverviewCountStatement = db.prepare(`
+    SELECT
+      COUNT(*) AS totalFacts,
+      COUNT(DISTINCT session_id) AS sessionsWithFacts
+    FROM analysis_facts
+  `)
+
+  const analysisOverviewByTypeStatement = db.prepare(`
+    SELECT
+      fact_type AS factType,
+      COUNT(*) AS count,
+      AVG(fact_score) AS avgScore
+    FROM analysis_facts
+    GROUP BY fact_type
+    ORDER BY count DESC, fact_type ASC
   `)
 
   const storage = {
@@ -795,6 +933,48 @@ export function createObservabilityStorage(
       }))
     },
 
+    saveToolEvents(events: Array<ToolEventRecord>): Array<StoredToolEvent> {
+      const saved: Array<StoredToolEvent> = []
+      for (const event of events) {
+        const createdAt = event.createdAt ?? DEFAULT_TIME()
+        const updatedAt = createdAt
+        const stored: StoredToolEvent = {
+          ...event,
+          sessionId: event.sessionId ?? null,
+          source: event.source ?? "live",
+          createdAt,
+          updatedAt,
+        }
+        let successValue: number | null = null
+        if (stored.success !== null && stored.success !== undefined) {
+          successValue = stored.success ? 1 : 0
+        }
+
+        upsertToolEvent.run({
+          $toolEventId: stored.toolEventId,
+          $sessionId: stored.sessionId,
+          $requestId: stored.requestId,
+          $toolName: stored.toolName,
+          $toolType: stored.toolType ?? null,
+          $argumentsSummary: stored.argumentsSummary ?? null,
+          $startedAt: stored.startedAt,
+          $finishedAt: stored.finishedAt ?? null,
+          $success: successValue,
+          $retryOf: stored.retryOf ?? null,
+          $outputSummary: stored.outputSummary ?? null,
+          $isRedundantCall: stored.isRedundantCall ? 1 : 0,
+          $isRecoveryCall: stored.isRecoveryCall ? 1 : 0,
+          $source: stored.source,
+          $createdAt: stored.createdAt,
+          $updatedAt: stored.updatedAt,
+        } as never)
+
+        saved.push(stored)
+      }
+
+      return saved
+    },
+
     replaceSessionAnalysisFacts(
       sessionId: string,
       facts: Array<AnalysisFactRecord>,
@@ -803,6 +983,16 @@ export function createObservabilityStorage(
         $sessionId: sessionId,
       } as never)
       return storage.saveAnalysisFacts(facts)
+    },
+
+    replaceSessionToolEvents(
+      sessionId: string,
+      events: Array<ToolEventRecord>,
+    ): Array<StoredToolEvent> {
+      deleteToolEventsBySessionStatement.run({
+        $sessionId: sessionId,
+      } as never)
+      return storage.saveToolEvents(events)
     },
 
     listAnalysisFactsBySession(sessionId: string): Array<AnalysisFactRecord> {
@@ -822,6 +1012,22 @@ export function createObservabilityStorage(
         source: row.source ?? "live",
         createdAt: row.createdAt,
         factValue: deserializeFactValue(row.factValueJson),
+      }))
+    },
+
+    listToolEventsBySession(sessionId: string): Array<StoredToolEvent> {
+      const rows = listToolEventsBySessionStatement.all({
+        $sessionId: sessionId,
+      }) as Array<StoredToolEvent>
+
+      return rows.map((row) => ({
+        ...row,
+        success:
+          row.success === null || row.success === undefined ?
+            null
+          : toBoolean(row.success),
+        isRedundantCall: toBoolean(row.isRedundantCall),
+        isRecoveryCall: toBoolean(row.isRecoveryCall),
       }))
     },
 
@@ -1081,7 +1287,32 @@ export function createObservabilityStorage(
           stream: toBoolean(row.stream),
           rawReference: deserializeRawReference(row.rawReferenceJson),
         })),
+        toolEvents: storage.listToolEventsBySession(sessionId),
         analysisFacts: storage.listAnalysisFactsBySession(sessionId),
+      }
+    },
+
+    getAnalysisOverview(): AnalysisOverview {
+      const counts = analysisOverviewCountStatement.get() as
+        | {
+            totalFacts: number | null
+            sessionsWithFacts: number | null
+          }
+        | undefined
+      const byTypeRows = analysisOverviewByTypeStatement.all() as Array<{
+        factType: AnalysisFactType
+        count: number
+        avgScore: number | null
+      }>
+
+      return {
+        totalFacts: counts?.totalFacts ?? 0,
+        sessionsWithFacts: counts?.sessionsWithFacts ?? 0,
+        factsByType: byTypeRows.map((row) => ({
+          factType: row.factType,
+          count: row.count,
+          avgScore: row.avgScore ?? null,
+        })),
       }
     },
 

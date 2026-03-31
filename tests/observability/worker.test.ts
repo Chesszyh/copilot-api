@@ -12,6 +12,7 @@ import type {
 import { createObservabilityStorage } from "~/lib/observability/storage"
 import {
   deriveAnalysisFactsForSession,
+  deriveToolEventsForSession,
   persistObservabilityEnvelope,
 } from "~/lib/observability/worker"
 
@@ -223,6 +224,157 @@ test("persistObservabilityEnvelope recalculates and stores analysis facts", asyn
         createdAt: 3200,
       },
     ])
+  } finally {
+    storage.close()
+    await fs.rm(baseDir, { recursive: true, force: true })
+  }
+})
+
+test("deriveToolEventsForSession extracts tool calls from request/response payloads", () => {
+  const factsSession: SessionRecord = {
+    sessionId: "session-tools",
+    startedAt: 1000,
+    status: "completed",
+    source: "live",
+  }
+
+  const events = deriveToolEventsForSession(factsSession, [
+    request({
+      requestId: "req-tool-1",
+      requestStartedAt: 1000,
+      requestFinishedAt: 1300,
+      sanitizedPayload: JSON.stringify({
+        model: "gpt-5.4",
+        messages: [
+          {
+            role: "assistant",
+            tool_calls: [
+              {
+                id: "call_1",
+                type: "function",
+                function: {
+                  name: "search_code",
+                  arguments: '{"query":"storage tool events"}',
+                },
+              },
+            ],
+          },
+        ],
+      }),
+      sanitizedResponse: JSON.stringify({
+        output: [
+          {
+            type: "tool_result",
+            tool_use_id: "call_1",
+            content: { status: "ok" },
+          },
+        ],
+      }),
+    }),
+  ])
+
+  expect(events).toEqual([
+    {
+      toolEventId: "req-tool-1:call:call_1",
+      sessionId: "session-1",
+      requestId: "req-tool-1",
+      toolName: "search_code",
+      toolType: "function",
+      argumentsSummary: '{"query":"storage tool events"}',
+      startedAt: 1000,
+      finishedAt: 1300,
+      success: null,
+      source: "live",
+    },
+    {
+      toolEventId: "req-tool-1:result:call_1",
+      sessionId: "session-1",
+      requestId: "req-tool-1",
+      toolName: "tool_result",
+      toolType: "tool_result",
+      outputSummary: '{"status":"ok"}',
+      startedAt: 1000,
+      finishedAt: 1300,
+      success: true,
+      source: "live",
+    },
+  ])
+})
+
+test("persistObservabilityEnvelope stores derived tool events with fact flags", async () => {
+  const baseDir = await createTempDir()
+  const storage = createObservabilityStorage({ baseDir })
+
+  const firstEnvelope: ObservabilityEnvelope = {
+    kind: "request_event",
+    mode: "full",
+    createdAt: 1000,
+    payload: request({
+      requestId: "req-a",
+      requestStartedAt: 1000,
+      requestFinishedAt: 1500,
+      sanitizedResponse: JSON.stringify({ summary: "first answer" }),
+    }),
+  }
+
+  const secondEnvelope: ObservabilityEnvelope = {
+    kind: "request_event",
+    mode: "full",
+    createdAt: 2000,
+    payload: request({
+      requestId: "req-b",
+      requestStartedAt: 2000,
+      requestFinishedAt: 2600,
+      sanitizedPayload: JSON.stringify({
+        message: "wrong, try again",
+        messages: [
+          {
+            role: "assistant",
+            tool_calls: [
+              {
+                id: "call_retry",
+                type: "function",
+                function: {
+                  name: "search_code",
+                  arguments: '{"query":"fix"}',
+                },
+              },
+            ],
+          },
+        ],
+      }),
+    }),
+  }
+
+  try {
+    persistObservabilityEnvelope(firstEnvelope, storage, {
+      rawRetentionDays: 3,
+    })
+    persistObservabilityEnvelope(secondEnvelope, storage, {
+      rawRetentionDays: 3,
+    })
+
+    const detail = storage.getSessionDetail("session-1")
+    expect(detail?.toolEvents).toHaveLength(1)
+    const toolEvent = detail?.toolEvents[0]
+    expect(toolEvent).toMatchObject({
+      toolEventId: "req-b:call:call_retry",
+      sessionId: "session-1",
+      requestId: "req-b",
+      toolName: "search_code",
+      toolType: "function",
+      argumentsSummary: '{"query":"fix"}',
+      startedAt: 2000,
+      finishedAt: 2600,
+      success: null,
+      retryOf: null,
+      outputSummary: null,
+      isRedundantCall: false,
+      isRecoveryCall: true,
+      source: "live",
+    })
+    expect(typeof toolEvent?.createdAt).toBe("number")
+    expect(typeof toolEvent?.updatedAt).toBe("number")
   } finally {
     storage.close()
     await fs.rm(baseDir, { recursive: true, force: true })
