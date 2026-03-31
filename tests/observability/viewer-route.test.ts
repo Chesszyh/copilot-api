@@ -27,6 +27,10 @@ describe("observability viewer route", () => {
     expect(html).toContain("文件路径")
     expect(html).toContain("源码视图")
     expect(html).toContain("renderJsonSourcePanel")
+    expect(html).toContain('id="session-search"')
+    expect(html).toContain('id="session-status-filter"')
+    expect(html).toContain('id="session-source-filter"')
+    expect(html).toContain('id="request-jump-list"')
   })
 
   test("redirects the trailing slash path to the canonical path", async () => {
