@@ -523,80 +523,41 @@
         gap: 6px;
       }
 
-      .json-tree {
+      .json-summary {
         display: grid;
         gap: 8px;
       }
 
-      .json-node {
-        border-radius: 14px;
-        border: 1px solid rgba(255, 255, 255, 0.06);
-        background: rgba(255, 255, 255, 0.02);
-        padding: 8px 10px;
-      }
-
-      .json-node[open] {
-        border-color: rgba(79, 140, 255, 0.2);
-        background: rgba(79, 140, 255, 0.06);
-      }
-
-      .json-node__summary {
-        cursor: pointer;
-        font-family: "Fira Code", monospace;
-        font-size: 0.84rem;
-        color: var(--text);
-      }
-
-      .json-node__summary::marker,
-      .json-node__summary::-webkit-details-marker {
-        color: var(--amber);
-      }
-
-      .json-node__children {
-        display: grid;
-        gap: 8px;
-        margin-top: 10px;
-        padding-left: 12px;
-        border-left: 1px solid rgba(255, 255, 255, 0.08);
-      }
-
-      .json-leaf {
-        display: grid;
-        gap: 4px;
-        padding: 8px 10px;
-        border-radius: 12px;
-        background: rgba(255, 255, 255, 0.02);
-        border: 1px solid rgba(255, 255, 255, 0.05);
-      }
-
-      .json-key {
-        color: var(--amber-2);
-        font-family: "Fira Code", monospace;
+      .json-summary__label {
+        color: var(--muted);
         font-size: 0.8rem;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+      }
+
+      .json-summary__chips {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+      }
+
+      .json-summary__chip {
+        display: inline-flex;
+        align-items: center;
+        padding: 6px 9px;
+        border-radius: 999px;
+        background: rgba(79, 140, 255, 0.08);
+        border: 1px solid rgba(79, 140, 255, 0.16);
+        color: #d6e7ff;
+        font-family: "Fira Code", monospace;
+        font-size: 0.77rem;
+        line-height: 1.35;
       }
 
       .json-value {
         font-family: "Fira Code", monospace;
         font-size: 0.84rem;
         color: #dce7f8;
-        white-space: pre-wrap;
-        word-break: break-word;
-      }
-
-      .json-value--string {
-        color: #b8e3ff;
-      }
-
-      .json-value--number {
-        color: #ffd08a;
-      }
-
-      .json-value--boolean {
-        color: #9df0c8;
-      }
-
-      .json-value--null {
-        color: #9fb0c9;
       }
 
       .json-raw {
@@ -606,6 +567,49 @@
         background: rgba(3, 8, 16, 0.92);
         border: 1px solid rgba(255, 255, 255, 0.05);
         overflow: auto;
+        white-space: pre;
+        line-height: 1.65;
+      }
+
+      .json-line {
+        display: block;
+        min-height: 1.65em;
+      }
+
+      .json-line:hover {
+        background: rgba(255, 255, 255, 0.03);
+      }
+
+      .json-gutter {
+        display: inline-block;
+        width: 3.5em;
+        margin-right: 14px;
+        color: var(--muted-2);
+        user-select: none;
+      }
+
+      .json-token-key {
+        color: var(--amber-2);
+      }
+
+      .json-token-string {
+        color: #b8e3ff;
+      }
+
+      .json-token-number {
+        color: #ffd08a;
+      }
+
+      .json-token-boolean {
+        color: #9df0c8;
+      }
+
+      .json-token-null {
+        color: #9fb0c9;
+      }
+
+      .json-token-punctuation {
+        color: #7ea9ff;
       }
 
       .code {
@@ -1022,109 +1026,148 @@
         return id;
       }
 
+      function unwrapJsonString(value, depth = 0) {
+        if (depth > 3 || typeof value !== "string") {
+          return value;
+        }
+
+        const trimmed = value.trim();
+        if (!trimmed) {
+          return value;
+        }
+
+        const fencedMatch = trimmed.match(/^```(?:json)?\s*([\s\S]*?)\s*```$/i);
+        const directCandidate = fencedMatch ? fencedMatch[1].trim() : trimmed;
+        const candidates = [directCandidate];
+
+        const objectStart = directCandidate.search(/[\[{]/);
+        const objectEnd = Math.max(
+          directCandidate.lastIndexOf("}"),
+          directCandidate.lastIndexOf("]"),
+        );
+        if (objectStart >= 0 && objectEnd > objectStart) {
+          candidates.push(directCandidate.slice(objectStart, objectEnd + 1));
+        }
+
+        for (const candidate of candidates) {
+          try {
+            const parsed = JSON.parse(candidate);
+            return typeof parsed === "string" ? unwrapJsonString(parsed, depth + 1) : parsed;
+          } catch {
+            continue;
+          }
+        }
+
+        return value;
+      }
+
       function tryParseJson(value) {
         if (typeof value !== "string" || !value.trim()) {
           return { ok: false, value: null };
         }
 
-        try {
-          return { ok: true, value: JSON.parse(value) };
-        } catch {
-          return { ok: false, value: null };
+        const parsed = unwrapJsonString(value);
+        if (parsed && typeof parsed === "object") {
+          return { ok: true, value: parsed };
         }
+
+        return { ok: false, value: null };
       }
 
-      function getJsonTypeLabel(value) {
+      function summarizeArrayItem(item, index) {
+        if (!item || typeof item !== "object" || Array.isArray(item)) {
+          return `[${index}]`;
+        }
+
+        const labels = [];
+        if (typeof item.role === "string") labels.push(`role=${item.role}`);
+        if (typeof item.type === "string") labels.push(`type=${item.type}`);
+        if (typeof item.name === "string") labels.push(`name=${item.name}`);
+        if (typeof item.id === "string") labels.push(`id=${item.id}`);
+
+        if (Array.isArray(item.content)) {
+          labels.push(`content[${item.content.length}]`);
+        }
+
+        return labels.length > 0 ? `[${index}] ${labels.join(" ")}` : `[${index}] object`;
+      }
+
+      function getJsonSummaryChips(value) {
+        if (!value || typeof value !== "object") {
+          return [];
+        }
+
         if (Array.isArray(value)) {
-          return `array(${value.length})`;
-        }
-        if (value === null) {
-          return "null";
-        }
-        return typeof value;
-      }
-
-      function renderJsonScalar(key, value) {
-        const type = value === null ? "null" : typeof value;
-        const className =
-          type === "string" ? "json-value--string" :
-          type === "number" ? "json-value--number" :
-          type === "boolean" ? "json-value--boolean" :
-          "json-value--null";
-
-        const displayValue =
-          type === "string" ? `"${value}"` :
-          value === null ? "null" :
-          String(value);
-
-        return `
-          <div class="json-leaf">
-            <span class="json-key">${escapeHtml(key)}</span>
-            <span class="json-value ${className}">${escapeHtml(displayValue)}</span>
-          </div>
-        `;
-      }
-
-      function renderJsonNode(key, value, depth = 0) {
-        if (value === null || typeof value !== "object") {
-          return renderJsonScalar(key, value);
+          return value.slice(0, 8).map((item, index) => summarizeArrayItem(item, index));
         }
 
-        const entries =
-          Array.isArray(value) ?
-            value.map((item, index) => [String(index), item])
-          : Object.entries(value);
+        return Object.entries(value).slice(0, 12).map(([key, entryValue]) => {
+          if (Array.isArray(entryValue)) {
+            const firstHint =
+              entryValue.length > 0 ? ` ${summarizeArrayItem(entryValue[0], 0)}` : "";
+            return `${key}[${entryValue.length}]${firstHint}`;
+          }
 
-        const childHtml = entries
-          .map(([childKey, childValue]) => renderJsonNode(childKey, childValue, depth + 1))
-          .join("");
+          if (entryValue && typeof entryValue === "object") {
+            return `${key} {${Object.keys(entryValue).length}}`;
+          }
 
-        return `
-          <details class="json-node" ${depth < 1 ? "open" : ""}>
-            <summary class="json-node__summary">${escapeHtml(key)} <span class="json-value json-value--null">${escapeHtml(getJsonTypeLabel(value))}</span></summary>
-            <div class="json-node__children">${childHtml}</div>
-          </details>
-        `;
+          return `${key}: ${String(entryValue).slice(0, 32)}`;
+        });
       }
 
-      function renderJsonTree(value) {
-        if (value === null || typeof value !== "object") {
-          return `<div class="json-tree">${renderJsonScalar("value", value)}</div>`;
-        }
+      function highlightJsonLine(line) {
+        let html = escapeHtml(line);
 
-        const entries =
-          Array.isArray(value) ?
-            value.map((item, index) => [String(index), item])
-          : Object.entries(value);
+        html = html.replace(
+          /(&quot;[^&]*&quot;)(\s*:)/g,
+          '<span class="json-token-key">$1</span><span class="json-token-punctuation">$2</span>',
+        );
+        html = html.replace(
+          /:\s(&quot;.*?&quot;)(?=[,\]}]|$)/g,
+          ': <span class="json-token-string">$1</span>',
+        );
+        html = html.replace(
+          /\b(-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?)\b/g,
+          '<span class="json-token-number">$1</span>',
+        );
+        html = html.replace(
+          /\b(true|false)\b/g,
+          '<span class="json-token-boolean">$1</span>',
+        );
+        html = html.replace(
+          /\bnull\b/g,
+          '<span class="json-token-null">null</span>',
+        );
+        html = html.replace(
+          /([{}\[\],])/g,
+          '<span class="json-token-punctuation">$1</span>',
+        );
 
-        return `<div class="json-tree">${entries
-          .map(([key, childValue]) => renderJsonNode(key, childValue))
-          .join("")}</div>`;
+        return html;
       }
 
-      function downloadText(filename, text) {
-        const blob = new Blob([text], { type: "application/json;charset=utf-8" });
-        const url = URL.createObjectURL(blob);
-        const anchor = document.createElement("a");
-        anchor.href = url;
-        anchor.download = filename;
-        document.body.appendChild(anchor);
-        anchor.click();
-        anchor.remove();
-        URL.revokeObjectURL(url);
+      function renderJsonSourceView(formatted) {
+        const lines = formatted.split("\n");
+        return `<pre class="code json-raw">${lines
+          .map(
+            (line, index) =>
+              `<span class="json-line"><span class="json-gutter">${index + 1}</span>${highlightJsonLine(line)}</span>`,
+          )
+          .join("")}</pre>`;
       }
 
-      async function copyText(text, successMessage) {
-        if (!navigator.clipboard?.writeText) {
-          throw new Error("当前浏览器不支持剪贴板写入");
-        }
-        await navigator.clipboard.writeText(text);
-        setStatus(successMessage, "success");
-      }
-
-      function renderJsonPanel({ title, value, rawPath, filename }) {
+      function renderJsonSourcePanel({ title, value, rawPath, filename }) {
         const parsed = tryParseJson(value);
         const formatted = parsed.ok ? JSON.stringify(parsed.value, null, 2) : String(value ?? "");
+        const summaryChips = parsed.ok ? getJsonSummaryChips(parsed.value) : [];
+        const summaryHtml =
+          summaryChips.length > 0 ?
+            `<div class="json-summary"><div class="json-summary__label">结构提示</div><div class="json-summary__chips">${summaryChips
+              .map((chip) => `<span class="json-summary__chip">${escapeHtml(chip)}</span>`)
+              .join("")}</div></div>`
+          : "";
+
         const downloadId = registerActionPayload(formatted);
         const copyJsonId = registerActionPayload(formatted);
         const copyPathId = rawPath ? registerActionPayload(rawPath) : null;
@@ -1147,13 +1190,31 @@
                 : ""
               }
             </div>
-            ${
-              parsed.ok ?
-                renderJsonTree(parsed.value)
-              : `<pre class="code json-raw">${escapeHtml(formatted)}</pre>`
-            }
+            <div class="json-summary__label">源码视图</div>
+            ${summaryHtml}
+            ${renderJsonSourceView(formatted)}
           </section>
         `;
+      }
+
+      function downloadText(filename, text) {
+        const blob = new Blob([text], { type: "application/json;charset=utf-8" });
+        const url = URL.createObjectURL(blob);
+        const anchor = document.createElement("a");
+        anchor.href = url;
+        anchor.download = filename;
+        document.body.appendChild(anchor);
+        anchor.click();
+        anchor.remove();
+        URL.revokeObjectURL(url);
+      }
+
+      async function copyText(text, successMessage) {
+        if (!navigator.clipboard?.writeText) {
+          throw new Error("当前浏览器不支持剪贴板写入");
+        }
+        await navigator.clipboard.writeText(text);
+        setStatus(successMessage, "success");
       }
 
       async function handleTimelineAction(event) {
@@ -1337,7 +1398,7 @@
               <div>Raw: <span class="code">${escapeHtml(request.rawReference ? (request.rawReference.pinned ? "pinned-raw" : "raw") : "sanitized")}</span></div>
               ${
                 request.sanitizedPayload ?
-                  renderJsonPanel({
+                  renderJsonSourcePanel({
                     title: "Sanitized Payload",
                     value: request.sanitizedPayload,
                     rawPath: request.rawReference?.bodyPath ?? null,
@@ -1347,7 +1408,7 @@
               }
               ${
                 request.sanitizedResponse ?
-                  renderJsonPanel({
+                  renderJsonSourcePanel({
                     title: "Sanitized Response",
                     value: request.sanitizedResponse,
                     rawPath: request.rawReference?.responsePath ?? null,

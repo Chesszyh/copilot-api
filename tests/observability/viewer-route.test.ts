@@ -25,6 +25,8 @@ describe("observability viewer route", () => {
     expect(html).toContain("/observability/pin")
     expect(html).toContain("下载 JSON")
     expect(html).toContain("文件路径")
+    expect(html).toContain("源码视图")
+    expect(html).toContain("renderJsonSourcePanel")
   })
 
   test("redirects the trailing slash path to the canonical path", async () => {
