@@ -525,6 +525,27 @@
         background: rgba(255, 255, 255, 0.03);
       }
 
+      .analysis-item__title {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 10px;
+        margin-bottom: 6px;
+      }
+
+      .analysis-item__hint {
+        color: var(--muted);
+        font-size: 0.86rem;
+        line-height: 1.5;
+      }
+
+      .analysis-item__actions {
+        display: flex;
+        gap: 8px;
+        flex-wrap: wrap;
+        margin-top: 8px;
+      }
+
       .timeline {
         display: grid;
         gap: 12px;
@@ -816,7 +837,7 @@
         <div class="hero-copy">
           <span class="eyebrow">Observability Viewer</span>
           <h1 id="page-title">本地会话与请求观测面板</h1>
-          <p>
+          <p id="hero-description">
             只读取本地 observability API，不直接请求 GitHub Copilot。你可以在这里查看
             session、请求时间线、pin 状态，并在调试模式下生成 mock 数据。
           </p>
@@ -1087,6 +1108,7 @@
         statusLine: document.getElementById("status-line"),
         mockPanel: document.getElementById("mock-panel"),
         mockBadgeText: document.getElementById("mock-badge-text"),
+        heroDescription: document.getElementById("hero-description"),
         summarySessionCount: document.getElementById("summary-session-count"),
         summaryRequestCount: document.getElementById("summary-request-count"),
         summaryFailedCount: document.getElementById("summary-failed-count"),
@@ -1131,6 +1153,12 @@
       });
 
       const numberFormatter = new Intl.NumberFormat("zh-CN");
+      const factTypeMeta = {
+        retry_after_answer: "回答后短时间重试，可能表示上一轮结果不满足预期",
+        user_correction_signal: "用户出现“wrong/重试/改一下”等纠偏信号",
+        redundant_tool_signal: "检测到疑似重复工具调用或重复工具结果",
+        high_reasoning_low_outcome_signal: "推理 token 高但产出低/失败，可能存在低效率回合",
+      };
 
       function escapeHtml(value) {
         return String(value)
@@ -1474,12 +1502,30 @@
           const item = document.createElement("article");
           item.className = "analysis-item";
           item.innerHTML = `
-            <div><span class="code">${escapeHtml(event.toolName ?? "—")}</span> · ${escapeHtml(event.toolType ?? "tool_call")}</div>
+            <div class="analysis-item__title">
+              <div><span class="code">${escapeHtml(event.toolName ?? "—")}</span> · ${escapeHtml(event.toolType ?? "tool_call")}</div>
+              <span class="pill ${event.success === false ? "pill--danger" : "pill--success"}">${event.success === null || event.success === undefined ? "unknown" : event.success ? "success" : "failed"}</span>
+            </div>
             <div class="code">request=${escapeHtml(event.requestId ?? "—")} success=${escapeHtml(String(event.success))}</div>
             <div class="code">redundant=${escapeHtml(String(Boolean(event.isRedundantCall)))} recovery=${escapeHtml(String(Boolean(event.isRecoveryCall)))}</div>
           `;
           elements.toolEventsList.appendChild(item);
         }
+      }
+
+      function normalizeFactEvidence(fact) {
+        const value = fact?.factValue && typeof fact.factValue === "object" ? fact.factValue : {};
+        const previousRequestId = typeof value.previousRequestId === "string" ? value.previousRequestId : null;
+        const nextRequestId = typeof value.nextRequestId === "string" ? value.nextRequestId : null;
+        return {
+          previousRequestId,
+          nextRequestId,
+          matchedPhrase: typeof value.matchedPhrase === "string" ? value.matchedPhrase : null,
+          reasoningTokens:
+            typeof value.reasoningTokens === "number" ? value.reasoningTokens : null,
+          outputTokens: typeof value.outputTokens === "number" ? value.outputTokens : null,
+          gapMs: typeof value.gapMs === "number" ? value.gapMs : null,
+        };
       }
 
       function renderAnalysisFacts(analysisFacts) {
@@ -1491,11 +1537,41 @@
         }
 
         for (const fact of analysisFacts) {
+          const evidence = normalizeFactEvidence(fact);
+          const requestId = fact.requestId ?? null;
+          const hint = factTypeMeta[fact.factType] ?? "规则型派生信号";
           const item = document.createElement("article");
           item.className = "analysis-item";
+          const actions = [];
+          if (requestId) {
+            actions.push(
+              `<button class="button button--ghost" type="button" data-jump-target="request-${escapeHtml(requestId)}">定位当前请求</button>`,
+            );
+          }
+          if (evidence.previousRequestId) {
+            actions.push(
+              `<button class="button button--ghost" type="button" data-jump-target="request-${escapeHtml(evidence.previousRequestId)}">定位前序请求</button>`,
+            );
+          }
+          if (evidence.nextRequestId) {
+            actions.push(
+              `<button class="button button--ghost" type="button" data-jump-target="request-${escapeHtml(evidence.nextRequestId)}">定位后续请求</button>`,
+            );
+          }
+
           item.innerHTML = `
-            <div><span class="code">${escapeHtml(fact.factType ?? "unknown")}</span> · score=${escapeHtml(formatMaybeNumber(fact.factScore))}</div>
-            <div class="code">request=${escapeHtml(fact.requestId ?? "session-level")} source=${escapeHtml(fact.source ?? "live")}</div>
+            <div class="analysis-item__title">
+              <div><span class="code">${escapeHtml(fact.factType ?? "unknown")}</span> · score=${escapeHtml(formatMaybeNumber(fact.factScore))}</div>
+              <span class="pill">${escapeHtml(fact.source ?? "live")}</span>
+            </div>
+            <div class="analysis-item__hint">${escapeHtml(hint)}</div>
+            <div class="code">request=${escapeHtml(fact.requestId ?? "session-level")} matchedPhrase=${escapeHtml(evidence.matchedPhrase ?? "—")} gapMs=${escapeHtml(formatMaybeNumber(evidence.gapMs))}</div>
+            <div class="code">reasoning=${escapeHtml(formatMaybeNumber(evidence.reasoningTokens))} output=${escapeHtml(formatMaybeNumber(evidence.outputTokens))}</div>
+            ${
+              actions.length > 0 ?
+                `<div class="analysis-item__actions">${actions.join("")}</div>`
+              : ""
+            }
           `;
           elements.analysisFactsList.appendChild(item);
         }
@@ -1834,6 +1910,10 @@
         const enabled = Boolean(viewerConfig.debugMockEnabled);
         elements.mockPanel.hidden = !enabled;
         elements.mockBadgeText.textContent = enabled ? "enabled" : "disabled";
+        elements.heroDescription.textContent =
+          enabled ?
+            "只读取本地 observability API，不直接请求 GitHub Copilot。你可以在这里查看 session、请求时间线、pin 状态，并在调试模式下生成 mock 数据。"
+          : "只读取本地 observability API，不直接请求 GitHub Copilot。你可以在这里查看 session、请求时间线、pin 状态和分析信号。";
       }
 
       function applySessionFilters() {
@@ -1862,6 +1942,27 @@
         setStatus(`已定位到 ${targetId.replace("request-", "")}。`, "success");
       }
 
+      function handleDetailAction(event) {
+        const button = event.target.closest("[data-jump-target]");
+        if (!button) {
+          return;
+        }
+        const targetId = button.getAttribute("data-jump-target");
+        if (!targetId) {
+          return;
+        }
+        const target = document.getElementById(targetId);
+        if (!target) {
+          setStatus(`未找到 ${targetId} 对应的请求。`, "error");
+          return;
+        }
+        target.scrollIntoView({
+          behavior: "smooth",
+          block: "start",
+        });
+        setStatus(`已定位到 ${targetId.replace("request-", "")}。`, "success");
+      }
+
       elements.refreshAll.addEventListener("click", reloadAll);
       elements.backfillAnalysis.addEventListener("click", runAnalysisBackfill);
       elements.refreshSessions.addEventListener("click", loadSessions);
@@ -1874,6 +1975,7 @@
       elements.mockForm.addEventListener("submit", generateMock);
       elements.mockReset.addEventListener("click", resetMock);
       elements.requestTimeline.addEventListener("click", handleTimelineAction);
+      elements.detailContent.addEventListener("click", handleDetailAction);
 
       applyViewerConfig();
       reloadAll();
